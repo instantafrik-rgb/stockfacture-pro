@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+  <!-- Background rounded squircle with safe margin -->
+  <rect width="512" height="512" rx="128" fill="#0f172a" />
+  <!-- Card base -->
+  <rect x="96" y="96" width="320" height="320" rx="48" fill="url(#grad1)" opacity="0.15" />
+  <!-- Main invoice / stock glyph -->
+  <rect x="128" y="112" width="256" height="288" rx="32" fill="#1e293b" stroke="#334155" stroke-width="8" />
+  <!-- Invoice top header bar -->
+  <path d="M128 144 C128 126.3 142.3 112 160 112 L352 112 C369.7 112 384 126.3 384 144 L384 176 L128 176 Z" fill="url(#grad1)" />
+  <!-- Document lines -->
+  <rect x="168" y="210" width="176" height="18" rx="9" fill="#94a3b8" />
+  <rect x="168" y="246" width="130" height="18" rx="9" fill="#64748b" />
+  <rect x="168" y="282" width="150" height="18" rx="9" fill="#64748b" />
+  <!-- Success / verified checkmark badge -->
+  <circle cx="340" cy="340" r="64" fill="url(#grad2)" />
+  <path d="M316 340 L332 356 L366 322" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

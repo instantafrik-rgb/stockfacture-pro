@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "User": {
+      "collection": "users",
+      "fields": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Settings": {
+      "collection": "users/{userId}/settings",
+      "fields": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "currency": { "type": "string" },
+        "currencyPosition": { "type": "string" },
+        "invoicePrefix": { "type": "string" },
+        "nextInvoiceNumber": { "type": "number" },
+        "quotePrefix": { "type": "string" },
+        "nextQuoteNumber": { "type": "number" },
+        "vatEnabled": { "type": "boolean" },
+        "vatRate": { "type": "number" },
+        "allowNegativeStock": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Product": {
+      "collection": "users/{userId}/products",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "barcode": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "purchasePrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "stockQuantity": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unit": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "_deleted": { "type": "boolean" }
+      }
+    },
+    "StockMovement": {
+      "collection": "users/{userId}/movements",
+      "fields": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "type": { "type": "string" },
+        "quantity": { "type": "number" },
+        "previousStock": { "type": "number" },
+        "newStock": { "type": "number" },
+        "reason": { "type": "string" },
+        "referenceId": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Client": {
+      "collection": "users/{userId}/clients",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "taxId": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "_deleted": { "type": "boolean" }
+      }
+    },
+    "Invoice": {
+      "collection": "users/{userId}/invoices",
+      "fields": {
+        "id": { "type": "string" },
+        "number": { "type": "string" },
+        "date": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "clientAddress": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discountTotal": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "vatAmount": { "type": "number" },
+        "total": { "type": "number" },
+        "amountPaid": { "type": "number" },
+        "remainingAmount": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "_deleted": { "type": "boolean" }
+      }
+    },
+    "Quote": {
+      "collection": "users/{userId}/quotes",
+      "fields": {
+        "id": { "type": "string" },
+        "number": { "type": "string" },
+        "date": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "clientName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "total": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "_deleted": { "type": "boolean" }
+      }
+    },
+    "Payment": {
+      "collection": "users/{userId}/payments",
+      "fields": {
+        "id": { "type": "string" },
+        "invoiceId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "method": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    }
+  }
+}
