@@ -130,17 +130,17 @@ export const BottomNavigation: React.FC = () => {
                 </div>
               </button>
 
-              {/* Catalogue Produits */}
+              {/* Rapports & Marges (accessible depuis le menu Plus) */}
               <button
-                onClick={() => handleTabClick('products')}
-                className="flex items-center gap-3 p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-left border border-[#E8EDF2] dark:border-slate-700/60 transition-all active:scale-95"
+                onClick={() => handleTabClick('reports')}
+                className="flex items-center gap-3 p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/80 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-left border border-[#E8EDF2] dark:border-slate-700/60 transition-all active:scale-95"
               >
-                <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0">
-                  <Package className="w-5 h-5" />
+                <div className="p-2.5 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400 shrink-0">
+                  <BarChart3 className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-slate-900 dark:text-white truncate">Catalogue</div>
-                  <div className="text-[10px] text-slate-400 truncate">{state.products.length} article(s)</div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white truncate">Rapports</div>
+                  <div className="text-[10px] text-slate-400 truncate">Marges & statistiques</div>
                 </div>
               </button>
 
@@ -214,17 +214,17 @@ export const BottomNavigation: React.FC = () => {
             </span>
           </div>
 
-          {/* 4. Rapports */}
+          {/* 4. Catalogue (Accès direct mobile) */}
           <button
-            onClick={() => handleTabClick('reports')}
+            onClick={() => handleTabClick('products')}
             className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-all ${
-              activeView === 'reports'
+              activeView === 'products'
                 ? 'text-[#F97316] font-black'
                 : 'text-[#94A3B8] dark:text-slate-400 hover:text-[#14213D]'
             }`}
           >
-            <BarChart3 className={`w-5 h-5 transition-transform ${activeView === 'reports' ? 'scale-110 text-[#F97316]' : ''}`} />
-            <span className="text-[10px] font-bold tracking-tight mt-1">Rapports</span>
+            <Package className={`w-5 h-5 transition-transform ${activeView === 'products' ? 'scale-110 text-[#F97316]' : ''}`} />
+            <span className="text-[10px] font-bold tracking-tight mt-1">Catalogue</span>
           </button>
 
           {/* 5. Plus / Compte */}

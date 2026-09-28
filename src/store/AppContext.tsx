@@ -208,6 +208,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firestoreSyncService.registerRemoteUpdateListener((updater) => {
       setState((prev) => {
         const next = updater(prev);
+        stateRef.current = next;
         // Persist to local cache so offline mode is immediately ready
         dataRepository.saveFullState(next);
         return next;
@@ -218,6 +219,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Sync state to local storage and Firestore Cloud
   const persistState = useCallback(async (newState: AppState) => {
     const prevState = stateRef.current;
+    stateRef.current = newState;
     setState(newState);
     await dataRepository.saveFullState(newState);
 
@@ -288,11 +290,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Settings
   const updateSettings = useCallback(
     async (newSettings: Partial<CompanySettings>) => {
+      const updatedSettings = { ...state.settings, ...newSettings };
       const updated: AppState = {
         ...state,
-        settings: { ...state.settings, ...newSettings },
+        settings: updatedSettings,
       };
       await persistState(updated);
+      firestoreSyncService.syncSettings(updatedSettings).catch(() => {});
     },
     [state, persistState]
   );
@@ -333,6 +337,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         movements: updatedMovements,
       });
 
+      firestoreSyncService.syncProduct(newProduct).catch(() => {});
       return newProduct;
     },
     [state, persistState]
@@ -340,10 +345,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProduct = useCallback(
     async (id: string, productData: Partial<Product>) => {
-      const updatedProducts = state.products.map((p) =>
-        p.id === id ? { ...p, ...productData, updatedAt: new Date().toISOString() } : p
-      );
+      let updatedProduct: Product | undefined;
+      const updatedProducts = state.products.map((p) => {
+        if (p.id === id) {
+          updatedProduct = { ...p, ...productData, updatedAt: new Date().toISOString() };
+          return updatedProduct;
+        }
+        return p;
+      });
       await persistState({ ...state, products: updatedProducts });
+      if (updatedProduct) {
+        firestoreSyncService.syncProduct(updatedProduct).catch(() => {});
+      }
     },
     [state, persistState]
   );
@@ -352,6 +365,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (id: string) => {
       const updatedProducts = state.products.filter((p) => p.id !== id);
       await persistState({ ...state, products: updatedProducts });
+      firestoreSyncService.deleteProduct(id).catch(() => {});
       return true;
     },
     [state, persistState]
@@ -368,6 +382,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         categories: [...state.categories, newCat],
       });
+      firestoreSyncService.syncCategory(newCat).catch(() => {});
       return newCat;
     },
     [state, persistState]
@@ -379,6 +394,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         categories: state.categories.filter((c) => c.id !== id),
       });
+      firestoreSyncService.deleteCategory(id).catch(() => {});
     },
     [state, persistState]
   );
@@ -453,6 +469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         movements: [movement, ...state.movements],
       });
 
+      firestoreSyncService.syncStockMovement(movement).catch(() => {});
       return { success: true };
     },
     [state, persistState]
@@ -481,6 +498,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         clients: [newClient, ...state.clients],
       });
+      // Direct write ensures instant cloud sync
+      firestoreSyncService.syncClient(newClient).catch(() => {});
       return newClient;
     },
     [state, persistState]
@@ -488,10 +507,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateClient = useCallback(
     async (id: string, clientData: Partial<Client>) => {
-      const updatedClients = state.clients.map((c) =>
-        c.id === id ? { ...c, ...clientData, updatedAt: new Date().toISOString() } : c
-      );
+      let updatedClient: Client | undefined;
+      const updatedClients = state.clients.map((c) => {
+        if (c.id === id) {
+          updatedClient = { ...c, ...clientData, updatedAt: new Date().toISOString() };
+          return updatedClient;
+        }
+        return c;
+      });
       await persistState({ ...state, clients: updatedClients });
+      if (updatedClient) {
+        firestoreSyncService.syncClient(updatedClient).catch(() => {});
+      }
     },
     [state, persistState]
   );
@@ -502,6 +529,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         clients: state.clients.filter((c) => c.id !== id),
       });
+      firestoreSyncService.deleteClient(id).catch(() => {});
       return true;
     },
     [state, persistState]
@@ -714,6 +742,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clients: newClients,
       });
 
+      // Direct write guarantees
+      firestoreSyncService.syncInvoice(newInvoice).catch(() => {});
+      if (client?.saveToDb && clientId) {
+        const c = newClients.find((cl) => cl.id === clientId);
+        if (c) firestoreSyncService.syncClient(c).catch(() => {});
+      }
+
       return { success: true, invoice: newInvoice };
     },
     [state, persistState]
@@ -721,10 +756,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateInvoice = useCallback(
     async (id: string, invoiceData: Partial<Invoice>) => {
-      const updatedInvoices = state.invoices.map((inv) =>
-        inv.id === id ? { ...inv, ...invoiceData, updatedAt: new Date().toISOString() } : inv
-      );
+      let updatedInv: Invoice | undefined;
+      const updatedInvoices = state.invoices.map((inv) => {
+        if (inv.id === id) {
+          updatedInv = { ...inv, ...invoiceData, updatedAt: new Date().toISOString() };
+          return updatedInv;
+        }
+        return inv;
+      });
       await persistState({ ...state, invoices: updatedInvoices });
+      if (updatedInv) {
+        firestoreSyncService.syncInvoice(updatedInv).catch(() => {});
+      }
     },
     [state, persistState]
   );
@@ -897,6 +940,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         movements: newMovements,
       });
 
+      const cancelledInv = updatedInvoices.find((i) => i.id === id);
+      if (cancelledInv) firestoreSyncService.syncInvoice(cancelledInv).catch(() => {});
+
       return { success: true };
     },
     [state, persistState]
@@ -960,6 +1006,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         payments: [newPayment, ...state.payments],
         invoices: updatedInvoices,
       });
+
+      firestoreSyncService.syncPayment(newPayment).catch(() => {});
+      const paidInv = updatedInvoices.find((i) => i.id === invoiceId);
+      if (paidInv) firestoreSyncService.syncInvoice(paidInv).catch(() => {});
 
       return { success: true, payment: newPayment };
     },
@@ -1049,6 +1099,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         quotes: [newQuote, ...state.quotes],
       });
 
+      firestoreSyncService.syncQuote(newQuote).catch(() => {});
+
       return { success: true, quote: newQuote };
     },
     [state, persistState]
@@ -1056,10 +1108,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateQuote = useCallback(
     async (id: string, quoteData: Partial<Quote>) => {
-      const updatedQuotes = state.quotes.map((q) =>
-        q.id === id ? { ...q, ...quoteData, updatedAt: new Date().toISOString() } : q
-      );
+      let updatedQ: Quote | undefined;
+      const updatedQuotes = state.quotes.map((q) => {
+        if (q.id === id) {
+          updatedQ = { ...q, ...quoteData, updatedAt: new Date().toISOString() };
+          return updatedQ;
+        }
+        return q;
+      });
       await persistState({ ...state, quotes: updatedQuotes });
+      if (updatedQ) {
+        firestoreSyncService.syncQuote(updatedQ).catch(() => {});
+      }
     },
     [state, persistState]
   );
@@ -1070,6 +1130,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         quotes: state.quotes.filter((q) => q.id !== id),
       });
+      firestoreSyncService.deleteQuote(id).catch(() => {});
     },
     [state, persistState]
   );
@@ -1132,6 +1193,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...state,
         quotes: updatedQuotes,
       });
+
+      const convertedQ = updatedQuotes.find((q) => q.id === quoteId);
+      if (convertedQ) firestoreSyncService.syncQuote(convertedQ).catch(() => {});
 
       return { success: true, invoice: res.invoice };
     },

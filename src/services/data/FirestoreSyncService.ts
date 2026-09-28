@@ -10,12 +10,13 @@
  * - Payments (Paiements)
  * - Settings (Paramètres)
  * - Categories
+ * - Closures (Clôtures de caisse)
  * 
  * Architecture:
  * - Bidirectional real-time synchronization via Firestore onSnapshot
  * - Firestore is the single source of truth for authenticated users
  * - Local storage (IndexedDB/localStorage) acts as an offline cache
- * - Atomic batch commits for multi-entity actions (e.g. Sales)
+ * - Anti-data-loss protection: never overwrites existing local data if cloud collection is empty
  * - Automatic recursive sanitization: strips undefined values to prevent FirebaseError
  */
 
@@ -41,6 +42,7 @@ import {
   PaymentRecord,
   CompanySettings,
   Category,
+  CashRegisterClosure,
 } from '../../types';
 import { SyncStatus } from './types';
 
@@ -88,6 +90,21 @@ export function sanitizeForFirestore<T>(data: T): T {
     }
   }
   return result as T;
+}
+
+/**
+ * Check if a record was created recently (within given window in ms).
+ * Used to avoid erasing newly created local records before they reach the cloud.
+ */
+function isRecentlyCreated(createdAt?: string, windowMs = 180000): boolean {
+  if (!createdAt) return false;
+  try {
+    const createdTime = new Date(createdAt).getTime();
+    if (isNaN(createdTime)) return false;
+    return Date.now() - createdTime < windowMs;
+  } catch {
+    return false;
+  }
 }
 
 export class FirestoreSyncService {
@@ -210,6 +227,10 @@ export class FirestoreSyncService {
       const productsRef = collection(db, 'users', userId, 'products');
       const productsSnap = await getDocs(productsRef);
       if (!productsSnap.empty) return true;
+
+      const clientsRef = collection(db, 'users', userId, 'clients');
+      const clientsSnap = await getDocs(clientsRef);
+      if (!clientsSnap.empty) return true;
 
       const invoicesRef = collection(db, 'users', userId, 'invoices');
       const invoicesSnap = await getDocs(invoicesRef);
@@ -336,6 +357,16 @@ export class FirestoreSyncService {
         await commitAndResetBatchIfNeeded();
       }
 
+      // Closures
+      if (localState.closures) {
+        for (const cl of localState.closures) {
+          const ref = doc(db, 'users', userId, 'closures', cl.id);
+          batch.set(ref, sanitizeForFirestore(cl));
+          count++;
+          await commitAndResetBatchIfNeeded();
+        }
+      }
+
       if (count > 0) {
         await batch.commit();
       }
@@ -394,13 +425,31 @@ export class FirestoreSyncService {
             }
           });
 
-          // Sort by creation date descending
           remoteProducts.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            products: remoteProducts,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remoteProducts.length === 0 && prev.products && prev.products.length > 0) {
+              this.syncLocalProductsIfCloudEmpty(userId, prev.products);
+              return prev;
+            }
+
+            const remoteIds = new Set(remoteProducts.map((p) => p.id));
+            const pendingLocal = prev.products.filter(
+              (p) => !remoteIds.has(p.id) && isRecentlyCreated(p.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalProductsIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remoteProducts, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+              return { ...prev, products: merged };
+            }
+
+            return {
+              ...prev,
+              products: remoteProducts,
+            };
+          });
         }
         this.markCollectionHealthy('products');
       },
@@ -424,10 +473,29 @@ export class FirestoreSyncService {
 
           remoteInvoices.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            invoices: remoteInvoices,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remoteInvoices.length === 0 && prev.invoices && prev.invoices.length > 0) {
+              this.syncLocalInvoicesIfCloudEmpty(userId, prev.invoices);
+              return prev;
+            }
+
+            const remoteIds = new Set(remoteInvoices.map((i) => i.id));
+            const pendingLocal = prev.invoices.filter(
+              (i) => !remoteIds.has(i.id) && isRecentlyCreated(i.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalInvoicesIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remoteInvoices, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+              return { ...prev, invoices: merged };
+            }
+
+            return {
+              ...prev,
+              invoices: remoteInvoices,
+            };
+          });
         }
         this.markCollectionHealthy('invoices');
       },
@@ -451,10 +519,31 @@ export class FirestoreSyncService {
 
           remoteClients.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            clients: remoteClients,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            // Anti-data-loss protection:
+            // If remote collection has 0 clients but local device has clients, preserve and upload!
+            if (remoteClients.length === 0 && prev.clients && prev.clients.length > 0) {
+              this.syncLocalClientsIfCloudEmpty(userId, prev.clients);
+              return prev;
+            }
+
+            const remoteIds = new Set(remoteClients.map((c) => c.id));
+            const pendingLocal = prev.clients.filter(
+              (c) => !remoteIds.has(c.id) && isRecentlyCreated(c.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalClientsIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remoteClients, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+              return { ...prev, clients: merged };
+            }
+
+            return {
+              ...prev,
+              clients: remoteClients,
+            };
+          });
         }
         this.markCollectionHealthy('clients');
       },
@@ -478,10 +567,29 @@ export class FirestoreSyncService {
 
           remoteQuotes.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            quotes: remoteQuotes,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remoteQuotes.length === 0 && prev.quotes && prev.quotes.length > 0) {
+              this.syncLocalQuotesIfCloudEmpty(userId, prev.quotes);
+              return prev;
+            }
+
+            const remoteIds = new Set(remoteQuotes.map((q) => q.id));
+            const pendingLocal = prev.quotes.filter(
+              (q) => !remoteIds.has(q.id) && isRecentlyCreated(q.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalQuotesIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remoteQuotes, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+              return { ...prev, quotes: merged };
+            }
+
+            return {
+              ...prev,
+              quotes: remoteQuotes,
+            };
+          });
         }
         this.markCollectionHealthy('quotes');
       },
@@ -502,10 +610,29 @@ export class FirestoreSyncService {
 
           remotePayments.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            payments: remotePayments,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remotePayments.length === 0 && prev.payments && prev.payments.length > 0) {
+              this.syncLocalPaymentsIfCloudEmpty(userId, prev.payments);
+              return prev;
+            }
+
+            const remoteIds = new Set(remotePayments.map((p) => p.id));
+            const pendingLocal = prev.payments.filter(
+              (p) => !remoteIds.has(p.id) && isRecentlyCreated(p.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalPaymentsIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remotePayments, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+              return { ...prev, payments: merged };
+            }
+
+            return {
+              ...prev,
+              payments: remotePayments,
+            };
+          });
         }
         this.markCollectionHealthy('payments');
       },
@@ -526,10 +653,29 @@ export class FirestoreSyncService {
 
           remoteMovements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            movements: remoteMovements,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remoteMovements.length === 0 && prev.movements && prev.movements.length > 0) {
+              this.syncLocalMovementsIfCloudEmpty(userId, prev.movements);
+              return prev;
+            }
+
+            const remoteIds = new Set(remoteMovements.map((m) => m.id));
+            const pendingLocal = prev.movements.filter(
+              (m) => !remoteIds.has(m.id) && isRecentlyCreated(m.createdAt)
+            );
+
+            if (pendingLocal.length > 0) {
+              this.syncLocalMovementsIfCloudEmpty(userId, pendingLocal);
+              const merged = [...remoteMovements, ...pendingLocal];
+              merged.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+              return { ...prev, movements: merged };
+            }
+
+            return {
+              ...prev,
+              movements: remoteMovements,
+            };
+          });
         }
         this.markCollectionHealthy('movements');
       },
@@ -548,16 +694,205 @@ export class FirestoreSyncService {
             remoteCategories.push({ ...(d.data() as Category), id: d.id });
           });
 
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            categories: remoteCategories,
-          }));
+          this.onRemoteUpdateCallback((prev) => {
+            if (remoteCategories.length === 0 && prev.categories && prev.categories.length > 0) {
+              this.syncLocalCategoriesIfCloudEmpty(userId, prev.categories);
+              return prev;
+            }
+
+            return {
+              ...prev,
+              categories: remoteCategories,
+            };
+          });
         }
         this.markCollectionHealthy('categories');
       },
       (err) => this.handleSnapshotError('categories', err)
     );
     this.activeSubscriptions.push(unsubCategories);
+
+    // 9. Closures (Clôtures de caisse) listener
+    const closuresRef = collection(db, 'users', userId, 'closures');
+    const unsubClosures = onSnapshot(
+      closuresRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteClosures: CashRegisterClosure[] = [];
+          snap.forEach((d) => {
+            remoteClosures.push({ ...(d.data() as CashRegisterClosure), id: d.id });
+          });
+
+          remoteClosures.sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
+            ...prev,
+            closures: remoteClosures,
+          }));
+        }
+        this.markCollectionHealthy('closures');
+      },
+      (err) => this.handleSnapshotError('closures', err)
+    );
+    this.activeSubscriptions.push(unsubClosures);
+  }
+
+  // --- Auto-upload helpers for unmigrated local collections ---
+  private async syncLocalClientsIfCloudEmpty(userId: string, clients: Client[]) {
+    if (!clients || clients.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const client of clients) {
+        const ref = doc(db, 'users', userId, 'clients', client.id);
+        batch.set(ref, sanitizeForFirestore({
+          ...client,
+          updatedAt: client.updatedAt || new Date().toISOString(),
+          createdAt: client.createdAt || new Date().toISOString(),
+        }));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+      console.log(`[FirestoreSync] Preserved and synced ${clients.length} clients to Firestore.`);
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local clients:', e);
+    }
+  }
+
+  private async syncLocalProductsIfCloudEmpty(userId: string, products: Product[]) {
+    if (!products || products.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const product of products) {
+        const ref = doc(db, 'users', userId, 'products', product.id);
+        batch.set(ref, sanitizeForFirestore({
+          ...product,
+          updatedAt: product.updatedAt || new Date().toISOString(),
+          createdAt: product.createdAt || new Date().toISOString(),
+        }));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local products:', e);
+    }
+  }
+
+  private async syncLocalInvoicesIfCloudEmpty(userId: string, invoices: Invoice[]) {
+    if (!invoices || invoices.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const inv of invoices) {
+        const ref = doc(db, 'users', userId, 'invoices', inv.id);
+        batch.set(ref, sanitizeForFirestore({
+          ...inv,
+          updatedAt: inv.updatedAt || new Date().toISOString(),
+          createdAt: inv.createdAt || new Date().toISOString(),
+        }));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local invoices:', e);
+    }
+  }
+
+  private async syncLocalQuotesIfCloudEmpty(userId: string, quotes: Quote[]) {
+    if (!quotes || quotes.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const q of quotes) {
+        const ref = doc(db, 'users', userId, 'quotes', q.id);
+        batch.set(ref, sanitizeForFirestore({
+          ...q,
+          updatedAt: q.updatedAt || new Date().toISOString(),
+          createdAt: q.createdAt || new Date().toISOString(),
+        }));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local quotes:', e);
+    }
+  }
+
+  private async syncLocalPaymentsIfCloudEmpty(userId: string, payments: PaymentRecord[]) {
+    if (!payments || payments.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const p of payments) {
+        const ref = doc(db, 'users', userId, 'payments', p.id);
+        batch.set(ref, sanitizeForFirestore(p));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local payments:', e);
+    }
+  }
+
+  private async syncLocalMovementsIfCloudEmpty(userId: string, movements: StockMovement[]) {
+    if (!movements || movements.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const m of movements) {
+        const ref = doc(db, 'users', userId, 'movements', m.id);
+        batch.set(ref, sanitizeForFirestore(m));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local movements:', e);
+    }
+  }
+
+  private async syncLocalCategoriesIfCloudEmpty(userId: string, categories: Category[]) {
+    if (!categories || categories.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      for (const cat of categories) {
+        const ref = doc(db, 'users', userId, 'categories', cat.id);
+        batch.set(ref, sanitizeForFirestore(cat));
+      }
+      await batch.commit();
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to sync local categories:', e);
+    }
   }
 
   private markCollectionHealthy(collectionName: string) {
@@ -608,21 +943,18 @@ export class FirestoreSyncService {
         errorMessage: 'Mode hors connexion',
       };
     } else if (code === 'permission-denied') {
-      // Permission denied is critical (rules reject user access)
       this.status = {
         ...this.status,
         state: 'error',
         errorMessage: `Permissions insuffisantes sur ${collectionName}`,
       };
     } else if (this.healthyCollections.size === 0) {
-      // All listeners have failed
       this.status = {
         ...this.status,
         state: 'error',
         errorMessage: `Erreur synchronisation ${collectionName}: ${message}`,
       };
     } else {
-      // Some listeners are still healthy, keep sync operational
       this.status = {
         ...this.status,
         state: 'idle',
@@ -832,6 +1164,19 @@ export class FirestoreSyncService {
         }
       }
 
+      // 9. Closures (Added)
+      if (next.closures) {
+        const prevClosuresIds = new Set((prev.closures || []).map((cl) => cl.id));
+        for (const cl of next.closures) {
+          if (!prevClosuresIds.has(cl.id)) {
+            const ref = doc(db, 'users', user.uid, 'closures', cl.id);
+            batch.set(ref, sanitizeForFirestore(cl));
+            opCount++;
+            await commitAndResetIfNeeded();
+          }
+        }
+      }
+
       if (opCount > 0) {
         await batch.commit();
       }
@@ -876,11 +1221,7 @@ export class FirestoreSyncService {
       }));
       this.markCollectionHealthy('products');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncProduct queued or failed:', {
-        operation: 'syncProduct',
-        productId: product.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncProduct failed:', { productId: product.id, error: e });
     }
   }
 
@@ -892,11 +1233,7 @@ export class FirestoreSyncService {
       await deleteDoc(ref);
       this.markCollectionHealthy('products');
     } catch (e: any) {
-      console.warn('[FirestoreSync] deleteProduct failed:', {
-        operation: 'deleteProduct',
-        productId,
-        error: e,
-      });
+      console.warn('[FirestoreSync] deleteProduct failed:', { productId, error: e });
     }
   }
 
@@ -908,11 +1245,7 @@ export class FirestoreSyncService {
       await setDoc(ref, sanitizeForFirestore(movement));
       this.markCollectionHealthy('movements');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncStockMovement failed:', {
-        operation: 'syncStockMovement',
-        movementId: movement.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncStockMovement failed:', { movementId: movement.id, error: e });
     }
   }
 
@@ -927,11 +1260,7 @@ export class FirestoreSyncService {
       }));
       this.markCollectionHealthy('clients');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncClient failed:', {
-        operation: 'syncClient',
-        clientId: client.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncClient failed:', { clientId: client.id, error: e });
     }
   }
 
@@ -943,11 +1272,7 @@ export class FirestoreSyncService {
       await deleteDoc(ref);
       this.markCollectionHealthy('clients');
     } catch (e: any) {
-      console.warn('[FirestoreSync] deleteClient failed:', {
-        operation: 'deleteClient',
-        clientId,
-        error: e,
-      });
+      console.warn('[FirestoreSync] deleteClient failed:', { clientId, error: e });
     }
   }
 
@@ -962,11 +1287,7 @@ export class FirestoreSyncService {
       }));
       this.markCollectionHealthy('invoices');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncInvoice failed:', {
-        operation: 'syncInvoice',
-        invoiceId: invoice.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncInvoice failed:', { invoiceId: invoice.id, error: e });
     }
   }
 
@@ -978,11 +1299,7 @@ export class FirestoreSyncService {
       await deleteDoc(ref);
       this.markCollectionHealthy('invoices');
     } catch (e: any) {
-      console.warn('[FirestoreSync] deleteInvoice failed:', {
-        operation: 'deleteInvoice',
-        invoiceId,
-        error: e,
-      });
+      console.warn('[FirestoreSync] deleteInvoice failed:', { invoiceId, error: e });
     }
   }
 
@@ -997,11 +1314,7 @@ export class FirestoreSyncService {
       }));
       this.markCollectionHealthy('quotes');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncQuote failed:', {
-        operation: 'syncQuote',
-        quoteId: quote.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncQuote failed:', { quoteId: quote.id, error: e });
     }
   }
 
@@ -1013,11 +1326,7 @@ export class FirestoreSyncService {
       await deleteDoc(ref);
       this.markCollectionHealthy('quotes');
     } catch (e: any) {
-      console.warn('[FirestoreSync] deleteQuote failed:', {
-        operation: 'deleteQuote',
-        quoteId,
-        error: e,
-      });
+      console.warn('[FirestoreSync] deleteQuote failed:', { quoteId, error: e });
     }
   }
 
@@ -1029,11 +1338,7 @@ export class FirestoreSyncService {
       await setDoc(ref, sanitizeForFirestore(payment));
       this.markCollectionHealthy('payments');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncPayment failed:', {
-        operation: 'syncPayment',
-        paymentId: payment.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncPayment failed:', { paymentId: payment.id, error: e });
     }
   }
 
@@ -1048,10 +1353,7 @@ export class FirestoreSyncService {
       }), { merge: true });
       this.markCollectionHealthy('settings');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncSettings failed:', {
-        operation: 'syncSettings',
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncSettings failed:', { error: e });
     }
   }
 
@@ -1063,11 +1365,7 @@ export class FirestoreSyncService {
       await setDoc(ref, sanitizeForFirestore(category));
       this.markCollectionHealthy('categories');
     } catch (e: any) {
-      console.warn('[FirestoreSync] syncCategory failed:', {
-        operation: 'syncCategory',
-        categoryId: category.id,
-        error: e,
-      });
+      console.warn('[FirestoreSync] syncCategory failed:', { categoryId: category.id, error: e });
     }
   }
 
@@ -1079,11 +1377,19 @@ export class FirestoreSyncService {
       await deleteDoc(ref);
       this.markCollectionHealthy('categories');
     } catch (e: any) {
-      console.warn('[FirestoreSync] deleteCategory failed:', {
-        operation: 'deleteCategory',
-        categoryId,
-        error: e,
-      });
+      console.warn('[FirestoreSync] deleteCategory failed:', { categoryId, error: e });
+    }
+  }
+
+  public async syncClosure(closure: CashRegisterClosure): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const ref = doc(db, 'users', user.uid, 'closures', closure.id);
+      await setDoc(ref, sanitizeForFirestore(closure));
+      this.markCollectionHealthy('closures');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncClosure failed:', { closureId: closure.id, error: e });
     }
   }
 }
