@@ -34,12 +34,10 @@ try {
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager(),
     }),
-  }, firebaseConfig.firestoreDatabaseId || undefined);
+  });
 } catch (e) {
   // If already initialized or persistent cache not supported in environment
-  firestoreInstance = firebaseConfig.firestoreDatabaseId
-    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+  firestoreInstance = getFirestore(app);
 }
 
 export const db = firestoreInstance;
