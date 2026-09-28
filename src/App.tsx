@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
 import { AuthProvider } from './store/AuthContext';
 import { CloudMigrationBanner } from './components/common/CloudMigrationBanner';
+import { PWAUpdateToast } from './components/common/PWAUpdateToast';
 import { AppShell } from './components/layout/AppShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { SalePage } from './pages/SalePage';
@@ -108,6 +109,7 @@ const MainView: React.FC = () => {
   return (
     <AppShell>
       <CloudMigrationBanner />
+      <PWAUpdateToast />
       {activeView === 'dashboard' && <DashboardPage />}
       {activeView === 'sales' && <SalePage />}
       {activeView === 'products' && <ProductsPage />}
