@@ -81,27 +81,53 @@ export const Header: React.FC<HeaderProps> = ({ title, subtitle, showBack = fals
           onClick={() => navigate('settings')}
           title={
             user
-              ? syncStatus.isOnline
+              ? syncStatus.state === 'syncing'
+                ? 'Synchronisation en cours...'
+                : syncStatus.state === 'error'
+                ? `Erreur de synchronisation: ${syncStatus.errorMessage || 'Vérifiez la connexion'}`
+                : syncStatus.isOnline
                 ? `Synchronisé avec ${user.email}`
-                : 'Hors ligne (modifications locales conservées)'
+                : 'Hors connexion (modifications locales conservées)'
               : 'Mode local (cliquez pour connecter Google)'
           }
-          className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[36px]"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[36px]"
         >
           {user ? (
             syncStatus.state === 'syncing' ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-500" />
-            ) : syncStatus.isOnline ? (
-              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-500 shrink-0" />
+                <span className="hidden sm:inline text-orange-600 dark:text-orange-400 font-semibold">
+                  Synchronisation…
+                </span>
+              </>
+            ) : syncStatus.state === 'error' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                <span className="hidden sm:inline text-rose-600 dark:text-rose-400 font-semibold">
+                  Erreur de synchronisation
+                </span>
+              </>
+            ) : !syncStatus.isOnline || syncStatus.state === 'offline' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                <span className="hidden sm:inline text-amber-600 dark:text-amber-400 font-semibold">
+                  Hors connexion
+                </span>
+              </>
             ) : (
-              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <span className="hidden sm:inline text-emerald-600 dark:text-emerald-400 font-semibold">
+                  Synchronisé
+                </span>
+              </>
             )
           ) : (
-            <CloudOff className="w-3.5 h-3.5 text-slate-400" />
+            <>
+              <CloudOff className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="hidden sm:inline text-slate-500">Local</span>
+            </>
           )}
-          <span className="hidden md:inline">
-            {user ? (syncStatus.isOnline ? 'Cloud' : 'Offline') : 'Local'}
-          </span>
         </button>
 
         {/* Dark/Light mode toggle */}

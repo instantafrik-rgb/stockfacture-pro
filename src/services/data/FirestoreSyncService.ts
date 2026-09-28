@@ -1,7 +1,7 @@
 /**
  * StockFacture Pro - Firestore Real-Time & Offline Sync Service
  * 
- * Synchronizes user data across multiple devices (PC, Phone, Tablet):
+ * Synchronizes user data across multiple devices (PC, Phone, Tablet) in real time:
  * - Products (Produits)
  * - Stock Movements (Mouvements de stock)
  * - Clients
@@ -11,12 +11,12 @@
  * - Settings (Paramètres)
  * - Categories
  * 
- * Features:
- * - Real-time two-way synchronization via Firestore onSnapshot
- * - Offline queue & resilient sync when internet returns
- * - Anti-duplication by document ID
- * - Timestamp-based conflict resolution (Last-Write-Wins)
- * - First-time login migration safety
+ * Architecture:
+ * - Bidirectional real-time synchronization via Firestore onSnapshot
+ * - Firestore is the single source of truth for authenticated users
+ * - Local storage (IndexedDB/localStorage) acts as an offline cache
+ * - Atomic batch commits for multi-entity actions (e.g. Sales)
+ * - Real-time propagation of creations, updates, and deletions
  */
 
 import {
@@ -95,7 +95,7 @@ export class FirestoreSyncService {
   }
 
   /**
-   * Start syncing for an authenticated user
+   * Start real-time sync for an authenticated user
    */
   public startSync(userId: string) {
     if (this.currentUserId === userId && this.activeSubscriptions.length > 0) {
@@ -112,12 +112,6 @@ export class FirestoreSyncService {
 
     try {
       this.subscribeToCollections(userId);
-      this.status = {
-        ...this.status,
-        state: 'idle',
-        lastSyncedAt: new Date().toISOString(),
-      };
-      this.notifyStatus();
     } catch (e: any) {
       console.warn('Error starting Firestore sync:', e);
       this.status = {
@@ -158,7 +152,13 @@ export class FirestoreSyncService {
 
       const productsRef = collection(db, 'users', userId, 'products');
       const productsSnap = await getDocs(productsRef);
-      return !productsSnap.empty;
+      if (!productsSnap.empty) return true;
+
+      const invoicesRef = collection(db, 'users', userId, 'invoices');
+      const invoicesSnap = await getDocs(invoicesRef);
+      if (!invoicesSnap.empty) return true;
+
+      return false;
     } catch (err) {
       console.warn('Error checking cloud data:', err);
       return false;
@@ -181,12 +181,20 @@ export class FirestoreSyncService {
         });
       }
 
-      // 2. Batched upload for products, clients, invoices, quotes, payments, movements, categories
-      const batch = writeBatch(db);
+      // 2. Batched upload
+      let batch = writeBatch(db);
       let count = 0;
 
+      const commitAndResetBatchIfNeeded = async () => {
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      };
+
       // Products
-      localState.products.forEach((p) => {
+      for (const p of localState.products) {
         const ref = doc(db, 'users', userId, 'products', p.id);
         batch.set(ref, {
           ...p,
@@ -194,10 +202,11 @@ export class FirestoreSyncService {
           createdAt: p.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Clients
-      localState.clients.forEach((c) => {
+      for (const c of localState.clients) {
         const ref = doc(db, 'users', userId, 'clients', c.id);
         batch.set(ref, {
           ...c,
@@ -205,10 +214,11 @@ export class FirestoreSyncService {
           createdAt: c.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Invoices
-      localState.invoices.forEach((inv) => {
+      for (const inv of localState.invoices) {
         const ref = doc(db, 'users', userId, 'invoices', inv.id);
         batch.set(ref, {
           ...inv,
@@ -216,10 +226,11 @@ export class FirestoreSyncService {
           createdAt: inv.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Quotes
-      localState.quotes.forEach((q) => {
+      for (const q of localState.quotes) {
         const ref = doc(db, 'users', userId, 'quotes', q.id);
         batch.set(ref, {
           ...q,
@@ -227,34 +238,38 @@ export class FirestoreSyncService {
           createdAt: q.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Payments
-      localState.payments.forEach((pay) => {
+      for (const pay of localState.payments) {
         const ref = doc(db, 'users', userId, 'payments', pay.id);
         batch.set(ref, {
           ...pay,
           createdAt: pay.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Stock Movements
-      localState.movements.forEach((m) => {
+      for (const m of localState.movements) {
         const ref = doc(db, 'users', userId, 'movements', m.id);
         batch.set(ref, {
           ...m,
           createdAt: m.createdAt || new Date().toISOString(),
         });
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       // Categories
-      localState.categories.forEach((cat) => {
+      for (const cat of localState.categories) {
         const ref = doc(db, 'users', userId, 'categories', cat.id);
         batch.set(ref, cat);
         count++;
-      });
+        await commitAndResetBatchIfNeeded();
+      }
 
       if (count > 0) {
         await batch.commit();
@@ -279,210 +294,435 @@ export class FirestoreSyncService {
     }
   }
 
-  // --- Real-time Listeners for Two-Way Synchronisation ---
+  // --- Real-Time Listeners for Bidirectional Synchronisation ---
   private subscribeToCollections(userId: string) {
     // 1. Settings listener
     const settingsRef = doc(db, 'users', userId, 'settings', 'company');
-    const unsubSettings = onSnapshot(settingsRef, (snap) => {
-      if (snap.exists() && this.onRemoteUpdateCallback) {
-        const cloudSettings = snap.data() as CompanySettings;
-        this.onRemoteUpdateCallback((prev) => ({
-          ...prev,
-          settings: { ...prev.settings, ...cloudSettings },
-        }));
-      }
-    }, (err) => console.warn('Settings snapshot error:', err));
+    const unsubSettings = onSnapshot(
+      settingsRef,
+      (snap) => {
+        if (snap.exists() && this.onRemoteUpdateCallback) {
+          const cloudSettings = snap.data() as CompanySettings;
+          this.onRemoteUpdateCallback((prev) => ({
+            ...prev,
+            settings: { ...prev.settings, ...cloudSettings },
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('settings', err)
+    );
     this.activeSubscriptions.push(unsubSettings);
 
     // 2. Products listener
     const productsRef = collection(db, 'users', userId, 'products');
-    const unsubProducts = onSnapshot(productsRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteProducts: Product[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Product & { _deleted?: boolean };
-          if (!data._deleted) {
-            remoteProducts.push({ ...data, id: d.id });
-          }
-        });
-
-        this.onRemoteUpdateCallback((prev) => {
-          // Merge remote products by ID and updatedAt
-          const map = new Map<string, Product>();
-          prev.products.forEach((p) => map.set(p.id, p));
-          remoteProducts.forEach((rp) => {
-            const local = map.get(rp.id);
-            if (!local || (rp.updatedAt && (!local.updatedAt || rp.updatedAt >= local.updatedAt))) {
-              map.set(rp.id, rp);
+    const unsubProducts = onSnapshot(
+      productsRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteProducts: Product[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Product & { _deleted?: boolean };
+            if (!data._deleted) {
+              remoteProducts.push({ ...data, id: d.id });
             }
           });
-          return {
+
+          // Sort by creation date descending
+          remoteProducts.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            products: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Products snapshot error:', err));
+            products: remoteProducts,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('products', err)
+    );
     this.activeSubscriptions.push(unsubProducts);
 
     // 3. Invoices listener
     const invoicesRef = collection(db, 'users', userId, 'invoices');
-    const unsubInvoices = onSnapshot(invoicesRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteInvoices: Invoice[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Invoice & { _deleted?: boolean };
-          if (!data._deleted) {
-            remoteInvoices.push({ ...data, id: d.id });
-          }
-        });
-
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, Invoice>();
-          prev.invoices.forEach((inv) => map.set(inv.id, inv));
-          remoteInvoices.forEach((rinv) => {
-            const local = map.get(rinv.id);
-            if (!local || (rinv.updatedAt && (!local.updatedAt || rinv.updatedAt >= local.updatedAt))) {
-              map.set(rinv.id, rinv);
+    const unsubInvoices = onSnapshot(
+      invoicesRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteInvoices: Invoice[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Invoice & { _deleted?: boolean };
+            if (!data._deleted) {
+              remoteInvoices.push({ ...data, id: d.id });
             }
           });
-          return {
+
+          remoteInvoices.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            invoices: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Invoices snapshot error:', err));
+            invoices: remoteInvoices,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('invoices', err)
+    );
     this.activeSubscriptions.push(unsubInvoices);
 
     // 4. Clients listener
     const clientsRef = collection(db, 'users', userId, 'clients');
-    const unsubClients = onSnapshot(clientsRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteClients: Client[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Client & { _deleted?: boolean };
-          if (!data._deleted) {
-            remoteClients.push({ ...data, id: d.id });
-          }
-        });
-
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, Client>();
-          prev.clients.forEach((c) => map.set(c.id, c));
-          remoteClients.forEach((rc) => {
-            const local = map.get(rc.id);
-            if (!local || (rc.updatedAt && (!local.updatedAt || rc.updatedAt >= local.updatedAt))) {
-              map.set(rc.id, rc);
+    const unsubClients = onSnapshot(
+      clientsRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteClients: Client[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Client & { _deleted?: boolean };
+            if (!data._deleted) {
+              remoteClients.push({ ...data, id: d.id });
             }
           });
-          return {
+
+          remoteClients.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            clients: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Clients snapshot error:', err));
+            clients: remoteClients,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('clients', err)
+    );
     this.activeSubscriptions.push(unsubClients);
 
     // 5. Quotes listener
     const quotesRef = collection(db, 'users', userId, 'quotes');
-    const unsubQuotes = onSnapshot(quotesRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteQuotes: Quote[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Quote & { _deleted?: boolean };
-          if (!data._deleted) {
-            remoteQuotes.push({ ...data, id: d.id });
-          }
-        });
-
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, Quote>();
-          prev.quotes.forEach((q) => map.set(q.id, q));
-          remoteQuotes.forEach((rq) => {
-            const local = map.get(rq.id);
-            if (!local || (rq.updatedAt && (!local.updatedAt || rq.updatedAt >= local.updatedAt))) {
-              map.set(rq.id, rq);
+    const unsubQuotes = onSnapshot(
+      quotesRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteQuotes: Quote[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Quote & { _deleted?: boolean };
+            if (!data._deleted) {
+              remoteQuotes.push({ ...data, id: d.id });
             }
           });
-          return {
+
+          remoteQuotes.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            quotes: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Quotes snapshot error:', err));
+            quotes: remoteQuotes,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('quotes', err)
+    );
     this.activeSubscriptions.push(unsubQuotes);
 
     // 6. Payments listener
     const paymentsRef = collection(db, 'users', userId, 'payments');
-    const unsubPayments = onSnapshot(paymentsRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remotePayments: PaymentRecord[] = [];
-        snap.forEach((d) => {
-          remotePayments.push({ ...(d.data() as PaymentRecord), id: d.id });
-        });
+    const unsubPayments = onSnapshot(
+      paymentsRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remotePayments: PaymentRecord[] = [];
+          snap.forEach((d) => {
+            remotePayments.push({ ...(d.data() as PaymentRecord), id: d.id });
+          });
 
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, PaymentRecord>();
-          prev.payments.forEach((p) => map.set(p.id, p));
-          remotePayments.forEach((rp) => map.set(rp.id, rp));
-          return {
+          remotePayments.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            payments: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Payments snapshot error:', err));
+            payments: remotePayments,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('payments', err)
+    );
     this.activeSubscriptions.push(unsubPayments);
 
     // 7. Stock Movements listener
     const movementsRef = collection(db, 'users', userId, 'movements');
-    const unsubMovements = onSnapshot(movementsRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteMovements: StockMovement[] = [];
-        snap.forEach((d) => {
-          remoteMovements.push({ ...(d.data() as StockMovement), id: d.id });
-        });
+    const unsubMovements = onSnapshot(
+      movementsRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteMovements: StockMovement[] = [];
+          snap.forEach((d) => {
+            remoteMovements.push({ ...(d.data() as StockMovement), id: d.id });
+          });
 
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, StockMovement>();
-          prev.movements.forEach((m) => map.set(m.id, m));
-          remoteMovements.forEach((rm) => map.set(rm.id, rm));
-          return {
+          remoteMovements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            movements: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Movements snapshot error:', err));
+            movements: remoteMovements,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('movements', err)
+    );
     this.activeSubscriptions.push(unsubMovements);
 
     // 8. Categories listener
     const categoriesRef = collection(db, 'users', userId, 'categories');
-    const unsubCategories = onSnapshot(categoriesRef, (snap) => {
-      if (!snap.empty && this.onRemoteUpdateCallback) {
-        const remoteCategories: Category[] = [];
-        snap.forEach((d) => {
-          remoteCategories.push({ ...(d.data() as Category), id: d.id });
-        });
+    const unsubCategories = onSnapshot(
+      categoriesRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteCategories: Category[] = [];
+          snap.forEach((d) => {
+            remoteCategories.push({ ...(d.data() as Category), id: d.id });
+          });
 
-        this.onRemoteUpdateCallback((prev) => {
-          const map = new Map<string, Category>();
-          prev.categories.forEach((c) => map.set(c.id, c));
-          remoteCategories.forEach((rc) => map.set(rc.id, rc));
-          return {
+          this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            categories: Array.from(map.values()),
-          };
-        });
-      }
-    }, (err) => console.warn('Categories snapshot error:', err));
+            categories: remoteCategories,
+          }));
+        }
+        this.markSynchronized();
+      },
+      (err) => this.handleSnapshotError('categories', err)
+    );
     this.activeSubscriptions.push(unsubCategories);
   }
 
-  // --- Real-time Entity Sync methods called on write ---
+  private markSynchronized() {
+    this.status = {
+      ...this.status,
+      state: 'idle',
+      lastSyncedAt: new Date().toISOString(),
+    };
+    this.notifyStatus();
+  }
+
+  private handleSnapshotError(collectionName: string, err: any) {
+    console.warn(`Snapshot error on ${collectionName}:`, err);
+    this.status = {
+      ...this.status,
+      state: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
+      errorMessage: err?.message || `Erreur synchronisation ${collectionName}`,
+    };
+    this.notifyStatus();
+  }
+
+  /**
+   * Atomic synchronization of all changes made in AppContext to Firestore
+   */
+  public async syncStateChanges(prev: AppState, next: AppState): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return; // Unauthenticated local mode
+
+    try {
+      this.status = { ...this.status, state: 'syncing' };
+      this.notifyStatus();
+
+      let batch = writeBatch(db);
+      let opCount = 0;
+
+      const commitAndResetIfNeeded = async () => {
+        if (opCount >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          opCount = 0;
+        }
+      };
+
+      // 1. Settings
+      if (JSON.stringify(prev.settings) !== JSON.stringify(next.settings)) {
+        const ref = doc(db, 'users', user.uid, 'settings', 'company');
+        batch.set(ref, {
+          ...next.settings,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+        opCount++;
+        await commitAndResetIfNeeded();
+      }
+
+      // 2. Products (Added / Updated)
+      const prevProductMap = new Map(prev.products.map((p) => [p.id, p]));
+      const nextProductMap = new Map(next.products.map((p) => [p.id, p]));
+
+      for (const [id, nextP] of nextProductMap) {
+        const prevP = prevProductMap.get(id);
+        if (
+          !prevP ||
+          prevP.updatedAt !== nextP.updatedAt ||
+          prevP.stockQuantity !== nextP.stockQuantity ||
+          prevP.name !== nextP.name ||
+          prevP.sellingPrice !== nextP.sellingPrice ||
+          JSON.stringify(prevP) !== JSON.stringify(nextP)
+        ) {
+          const ref = doc(db, 'users', user.uid, 'products', id);
+          batch.set(ref, {
+            ...nextP,
+            updatedAt: nextP.updatedAt || new Date().toISOString(),
+          });
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // Products (Deleted)
+      for (const [id] of prevProductMap) {
+        if (!nextProductMap.has(id)) {
+          const ref = doc(db, 'users', user.uid, 'products', id);
+          batch.delete(ref);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 3. Stock Movements (Added)
+      const prevMovementIds = new Set(prev.movements.map((m) => m.id));
+      for (const m of next.movements) {
+        if (!prevMovementIds.has(m.id)) {
+          const ref = doc(db, 'users', user.uid, 'movements', m.id);
+          batch.set(ref, m);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 4. Clients (Added / Updated)
+      const prevClientMap = new Map(prev.clients.map((c) => [c.id, c]));
+      const nextClientMap = new Map(next.clients.map((c) => [c.id, c]));
+
+      for (const [id, nextC] of nextClientMap) {
+        const prevC = prevClientMap.get(id);
+        if (!prevC || JSON.stringify(prevC) !== JSON.stringify(nextC)) {
+          const ref = doc(db, 'users', user.uid, 'clients', id);
+          batch.set(ref, {
+            ...nextC,
+            updatedAt: nextC.updatedAt || new Date().toISOString(),
+          });
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // Clients (Deleted)
+      for (const [id] of prevClientMap) {
+        if (!nextClientMap.has(id)) {
+          const ref = doc(db, 'users', user.uid, 'clients', id);
+          batch.delete(ref);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 5. Invoices (Added / Updated)
+      const prevInvoiceMap = new Map(prev.invoices.map((i) => [i.id, i]));
+      const nextInvoiceMap = new Map(next.invoices.map((i) => [i.id, i]));
+
+      for (const [id, nextI] of nextInvoiceMap) {
+        const prevI = prevInvoiceMap.get(id);
+        if (!prevI || JSON.stringify(prevI) !== JSON.stringify(nextI)) {
+          const ref = doc(db, 'users', user.uid, 'invoices', id);
+          batch.set(ref, {
+            ...nextI,
+            updatedAt: nextI.updatedAt || new Date().toISOString(),
+          });
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // Invoices (Deleted)
+      for (const [id] of prevInvoiceMap) {
+        if (!nextInvoiceMap.has(id)) {
+          const ref = doc(db, 'users', user.uid, 'invoices', id);
+          batch.delete(ref);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 6. Quotes (Added / Updated)
+      const prevQuoteMap = new Map(prev.quotes.map((q) => [q.id, q]));
+      const nextQuoteMap = new Map(next.quotes.map((q) => [q.id, q]));
+
+      for (const [id, nextQ] of nextQuoteMap) {
+        const prevQ = prevQuoteMap.get(id);
+        if (!prevQ || JSON.stringify(prevQ) !== JSON.stringify(nextQ)) {
+          const ref = doc(db, 'users', user.uid, 'quotes', id);
+          batch.set(ref, {
+            ...nextQ,
+            updatedAt: nextQ.updatedAt || new Date().toISOString(),
+          });
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // Quotes (Deleted)
+      for (const [id] of prevQuoteMap) {
+        if (!nextQuoteMap.has(id)) {
+          const ref = doc(db, 'users', user.uid, 'quotes', id);
+          batch.delete(ref);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 7. Payments (Added)
+      const prevPaymentIds = new Set(prev.payments.map((p) => p.id));
+      for (const p of next.payments) {
+        if (!prevPaymentIds.has(p.id)) {
+          const ref = doc(db, 'users', user.uid, 'payments', p.id);
+          batch.set(ref, p);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      // 8. Categories (Added / Updated / Deleted)
+      const prevCatMap = new Map(prev.categories.map((c) => [c.id, c]));
+      const nextCatMap = new Map(next.categories.map((c) => [c.id, c]));
+
+      for (const [id, nextCat] of nextCatMap) {
+        const prevCat = prevCatMap.get(id);
+        if (!prevCat || JSON.stringify(prevCat) !== JSON.stringify(nextCat)) {
+          const ref = doc(db, 'users', user.uid, 'categories', id);
+          batch.set(ref, nextCat);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      for (const [id] of prevCatMap) {
+        if (!nextCatMap.has(id)) {
+          const ref = doc(db, 'users', user.uid, 'categories', id);
+          batch.delete(ref);
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
+      }
+
+      if (opCount > 0) {
+        await batch.commit();
+      }
+
+      this.markSynchronized();
+    } catch (err: any) {
+      console.warn('Sync state changes error:', err);
+      this.status = {
+        ...this.status,
+        state: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
+        errorMessage: err?.message || 'Erreur lors de la synchronisation',
+      };
+      this.notifyStatus();
+    }
+  }
+
+  // --- Granular direct entity sync helpers ---
   public async syncProduct(product: Product): Promise<void> {
     const user = auth.currentUser;
     if (!user) return;
@@ -491,7 +731,8 @@ export class FirestoreSyncService {
       await setDoc(ref, {
         ...product,
         updatedAt: product.updatedAt || new Date().toISOString(),
-      }, { merge: true });
+      });
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync product queued offline:', e);
     }
@@ -501,9 +742,9 @@ export class FirestoreSyncService {
     const user = auth.currentUser;
     if (!user) return;
     try {
-      // Soft-delete with tombstone so other offline devices know it was removed
       const ref = doc(db, 'users', user.uid, 'products', productId);
-      await setDoc(ref, { _deleted: true, updatedAt: new Date().toISOString() }, { merge: true });
+      await deleteDoc(ref);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync deleteProduct queued offline:', e);
     }
@@ -514,7 +755,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'movements', movement.id);
-      await setDoc(ref, movement, { merge: true });
+      await setDoc(ref, movement);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync movement queued offline:', e);
     }
@@ -528,7 +770,8 @@ export class FirestoreSyncService {
       await setDoc(ref, {
         ...client,
         updatedAt: client.updatedAt || new Date().toISOString(),
-      }, { merge: true });
+      });
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync client queued offline:', e);
     }
@@ -539,7 +782,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'clients', clientId);
-      await setDoc(ref, { _deleted: true, updatedAt: new Date().toISOString() }, { merge: true });
+      await deleteDoc(ref);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync deleteClient queued offline:', e);
     }
@@ -553,7 +797,8 @@ export class FirestoreSyncService {
       await setDoc(ref, {
         ...invoice,
         updatedAt: invoice.updatedAt || new Date().toISOString(),
-      }, { merge: true });
+      });
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync invoice queued offline:', e);
     }
@@ -564,7 +809,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'invoices', invoiceId);
-      await setDoc(ref, { _deleted: true, updatedAt: new Date().toISOString() }, { merge: true });
+      await deleteDoc(ref);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync deleteInvoice queued offline:', e);
     }
@@ -578,7 +824,8 @@ export class FirestoreSyncService {
       await setDoc(ref, {
         ...quote,
         updatedAt: quote.updatedAt || new Date().toISOString(),
-      }, { merge: true });
+      });
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync quote queued offline:', e);
     }
@@ -589,7 +836,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'quotes', quoteId);
-      await setDoc(ref, { _deleted: true, updatedAt: new Date().toISOString() }, { merge: true });
+      await deleteDoc(ref);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync deleteQuote queued offline:', e);
     }
@@ -600,7 +848,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'payments', payment.id);
-      await setDoc(ref, payment, { merge: true });
+      await setDoc(ref, payment);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync payment queued offline:', e);
     }
@@ -615,6 +864,7 @@ export class FirestoreSyncService {
         ...settings,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync settings queued offline:', e);
     }
@@ -625,7 +875,8 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'categories', category.id);
-      await setDoc(ref, category, { merge: true });
+      await setDoc(ref, category);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync category queued offline:', e);
     }
@@ -637,6 +888,7 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'categories', categoryId);
       await deleteDoc(ref);
+      this.markSynchronized();
     } catch (e) {
       console.warn('Sync deleteCategory queued offline:', e);
     }

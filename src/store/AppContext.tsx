@@ -152,6 +152,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(initialEmptyState);
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
+
   const [isLoading, setIsLoading] = useState(true);
   const [activeView, setActiveView] = useState<ActiveView>('dashboard');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -200,21 +203,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     init();
   }, []);
 
-  // Listen for real-time remote updates from Firestore and merge into local state
+  // Listen for real-time remote updates from Firestore and update local state & offline cache
   useEffect(() => {
     firestoreSyncService.registerRemoteUpdateListener((updater) => {
       setState((prev) => {
         const next = updater(prev);
+        // Persist to local cache so offline mode is immediately ready
         dataRepository.saveFullState(next);
         return next;
       });
     });
   }, []);
 
-  // Sync state to storage
+  // Sync state to local storage and Firestore Cloud
   const persistState = useCallback(async (newState: AppState) => {
+    const prevState = stateRef.current;
     setState(newState);
     await dataRepository.saveFullState(newState);
+
+    // Asynchronously synchronize state delta to Firestore Cloud
+    firestoreSyncService.syncStateChanges(prevState, newState).catch((err) => {
+      console.warn('Firestore cloud sync error:', err);
+    });
   }, []);
 
   // Navigation helpers

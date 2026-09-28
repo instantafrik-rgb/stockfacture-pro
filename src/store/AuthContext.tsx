@@ -29,6 +29,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state } = useApp();
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
+
   const [user, setUser] = useState<User | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -44,7 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return unsub;
   }, []);
 
-  // Subscribe to Firebase Auth state
+  // Subscribe to Firebase Auth state once upon mount
   useEffect(() => {
     const unsubscribe = subscribeToAuth(async (currentUser) => {
       setUser(currentUser);
@@ -57,9 +60,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Check for first-login migration safety
         const hasCloud = await firestoreSyncService.hasCloudData(currentUser.uid);
-        const hasLocal = (state.products && state.products.length > 0) ||
-                         (state.clients && state.clients.length > 0) ||
-                         (state.invoices && state.invoices.length > 0);
+        const currentState = stateRef.current;
+        const hasLocal =
+          (currentState.products && currentState.products.length > 0) ||
+          (currentState.clients && currentState.clients.length > 0) ||
+          (currentState.invoices && currentState.invoices.length > 0);
 
         if (!hasCloud && hasLocal) {
           // Local data exists on device, cloud is empty: propose migration
@@ -74,7 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
-  }, [state.products, state.clients, state.invoices]);
+  }, []);
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
