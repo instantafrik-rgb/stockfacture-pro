@@ -16,7 +16,7 @@
  * - Firestore is the single source of truth for authenticated users
  * - Local storage (IndexedDB/localStorage) acts as an offline cache
  * - Atomic batch commits for multi-entity actions (e.g. Sales)
- * - Real-time propagation of creations, updates, and deletions
+ * - Automatic recursive sanitization: strips undefined values to prevent FirebaseError
  */
 
 import {
@@ -44,11 +44,61 @@ import {
 } from '../../types';
 import { SyncStatus } from './types';
 
+/**
+ * Central utility to recursively sanitize objects before writing to Firestore.
+ * Removes all properties whose value is strictly `undefined`, preventing:
+ * "FirebaseError: Unsupported field value: undefined"
+ * 
+ * Preserves:
+ * - null, false, 0, "" (empty strings)
+ * - valid arrays and nested objects
+ * - Date and Firestore Timestamp instances
+ */
+export function sanitizeForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return data;
+  }
+
+  // Primitive types
+  if (typeof data !== 'object') {
+    return data;
+  }
+
+  // Date objects or Firestore Timestamps
+  if (data instanceof Date || (typeof (data as any)?.toDate === 'function')) {
+    return data;
+  }
+
+  // Arrays: sanitize each element and filter out undefined
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+
+  // Plain objects: omit undefined properties
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      if (typeof value === 'object' && value !== null) {
+        result[key] = sanitizeForFirestore(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result as T;
+}
+
 export class FirestoreSyncService {
   private activeSubscriptions: Unsubscribe[] = [];
   private currentUserId: string | null = null;
   private onRemoteUpdateCallback: ((updater: (prevState: AppState) => AppState) => void) | null = null;
   private statusListeners: Set<(status: SyncStatus) => void> = new Set();
+
+  // Fine-grained error and health tracking per collection
+  private collectionErrors: Map<string, { code?: string; message: string; timestamp: string }> = new Map();
+  private healthyCollections: Set<string> = new Set();
 
   private status: SyncStatus = {
     state: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'idle',
@@ -104,6 +154,9 @@ export class FirestoreSyncService {
 
     this.stopSync();
     this.currentUserId = userId;
+    this.collectionErrors.clear();
+    this.healthyCollections.clear();
+
     this.status = {
       ...this.status,
       state: 'syncing',
@@ -113,11 +166,11 @@ export class FirestoreSyncService {
     try {
       this.subscribeToCollections(userId);
     } catch (e: any) {
-      console.warn('Error starting Firestore sync:', e);
+      console.warn('[FirestoreSync] Error starting sync listeners:', e);
       this.status = {
         ...this.status,
         state: 'error',
-        errorMessage: e?.message || 'Erreur de synchronisation',
+        errorMessage: e?.message || 'Erreur lors du démarrage de la synchronisation',
       };
       this.notifyStatus();
     }
@@ -134,9 +187,13 @@ export class FirestoreSyncService {
     });
     this.activeSubscriptions = [];
     this.currentUserId = null;
+    this.collectionErrors.clear();
+    this.healthyCollections.clear();
+
     this.status = {
       ...this.status,
       state: 'idle',
+      errorMessage: undefined,
     };
     this.notifyStatus();
   }
@@ -160,13 +217,14 @@ export class FirestoreSyncService {
 
       return false;
     } catch (err) {
-      console.warn('Error checking cloud data:', err);
+      console.warn('[FirestoreSync] Error checking cloud data:', err);
       return false;
     }
   }
 
   /**
    * Migrate full local state to Firestore on first login
+   * All objects are systematically sanitized to eliminate any `undefined` values.
    */
   public async migrateLocalToCloud(userId: string, localState: AppState): Promise<boolean> {
     try {
@@ -175,10 +233,11 @@ export class FirestoreSyncService {
 
       // 1. Settings
       if (localState.settings) {
-        await setDoc(doc(db, 'users', userId, 'settings', 'company'), {
+        const sanitizedSettings = sanitizeForFirestore({
           ...localState.settings,
           updatedAt: new Date().toISOString(),
         });
+        await setDoc(doc(db, 'users', userId, 'settings', 'company'), sanitizedSettings);
       }
 
       // 2. Batched upload
@@ -196,11 +255,12 @@ export class FirestoreSyncService {
       // Products
       for (const p of localState.products) {
         const ref = doc(db, 'users', userId, 'products', p.id);
-        batch.set(ref, {
+        const sanitizedProduct = sanitizeForFirestore({
           ...p,
           updatedAt: p.updatedAt || new Date().toISOString(),
           createdAt: p.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedProduct);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -208,11 +268,12 @@ export class FirestoreSyncService {
       // Clients
       for (const c of localState.clients) {
         const ref = doc(db, 'users', userId, 'clients', c.id);
-        batch.set(ref, {
+        const sanitizedClient = sanitizeForFirestore({
           ...c,
           updatedAt: c.updatedAt || new Date().toISOString(),
           createdAt: c.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedClient);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -220,11 +281,12 @@ export class FirestoreSyncService {
       // Invoices
       for (const inv of localState.invoices) {
         const ref = doc(db, 'users', userId, 'invoices', inv.id);
-        batch.set(ref, {
+        const sanitizedInvoice = sanitizeForFirestore({
           ...inv,
           updatedAt: inv.updatedAt || new Date().toISOString(),
           createdAt: inv.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedInvoice);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -232,11 +294,12 @@ export class FirestoreSyncService {
       // Quotes
       for (const q of localState.quotes) {
         const ref = doc(db, 'users', userId, 'quotes', q.id);
-        batch.set(ref, {
+        const sanitizedQuote = sanitizeForFirestore({
           ...q,
           updatedAt: q.updatedAt || new Date().toISOString(),
           createdAt: q.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedQuote);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -244,10 +307,11 @@ export class FirestoreSyncService {
       // Payments
       for (const pay of localState.payments) {
         const ref = doc(db, 'users', userId, 'payments', pay.id);
-        batch.set(ref, {
+        const sanitizedPayment = sanitizeForFirestore({
           ...pay,
           createdAt: pay.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedPayment);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -255,10 +319,11 @@ export class FirestoreSyncService {
       // Stock Movements
       for (const m of localState.movements) {
         const ref = doc(db, 'users', userId, 'movements', m.id);
-        batch.set(ref, {
+        const sanitizedMovement = sanitizeForFirestore({
           ...m,
           createdAt: m.createdAt || new Date().toISOString(),
         });
+        batch.set(ref, sanitizedMovement);
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -266,7 +331,7 @@ export class FirestoreSyncService {
       // Categories
       for (const cat of localState.categories) {
         const ref = doc(db, 'users', userId, 'categories', cat.id);
-        batch.set(ref, cat);
+        batch.set(ref, sanitizeForFirestore(cat));
         count++;
         await commitAndResetBatchIfNeeded();
       }
@@ -279,11 +344,12 @@ export class FirestoreSyncService {
         ...this.status,
         state: 'idle',
         lastSyncedAt: new Date().toISOString(),
+        errorMessage: undefined,
       };
       this.notifyStatus();
       return true;
     } catch (err: any) {
-      console.error('Migration to cloud error:', err);
+      console.error('[FirestoreSync] Migration to cloud error:', err);
       this.status = {
         ...this.status,
         state: 'error',
@@ -308,7 +374,7 @@ export class FirestoreSyncService {
             settings: { ...prev.settings, ...cloudSettings },
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('settings');
       },
       (err) => this.handleSnapshotError('settings', err)
     );
@@ -336,7 +402,7 @@ export class FirestoreSyncService {
             products: remoteProducts,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('products');
       },
       (err) => this.handleSnapshotError('products', err)
     );
@@ -363,7 +429,7 @@ export class FirestoreSyncService {
             invoices: remoteInvoices,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('invoices');
       },
       (err) => this.handleSnapshotError('invoices', err)
     );
@@ -390,7 +456,7 @@ export class FirestoreSyncService {
             clients: remoteClients,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('clients');
       },
       (err) => this.handleSnapshotError('clients', err)
     );
@@ -417,7 +483,7 @@ export class FirestoreSyncService {
             quotes: remoteQuotes,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('quotes');
       },
       (err) => this.handleSnapshotError('quotes', err)
     );
@@ -441,7 +507,7 @@ export class FirestoreSyncService {
             payments: remotePayments,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('payments');
       },
       (err) => this.handleSnapshotError('payments', err)
     );
@@ -465,7 +531,7 @@ export class FirestoreSyncService {
             movements: remoteMovements,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('movements');
       },
       (err) => this.handleSnapshotError('movements', err)
     );
@@ -487,34 +553,89 @@ export class FirestoreSyncService {
             categories: remoteCategories,
           }));
         }
-        this.markSynchronized();
+        this.markCollectionHealthy('categories');
       },
       (err) => this.handleSnapshotError('categories', err)
     );
     this.activeSubscriptions.push(unsubCategories);
   }
 
-  private markSynchronized() {
-    this.status = {
-      ...this.status,
-      state: 'idle',
-      lastSyncedAt: new Date().toISOString(),
-    };
+  private markCollectionHealthy(collectionName: string) {
+    this.collectionErrors.delete(collectionName);
+    this.healthyCollections.add(collectionName);
+
+    if (this.collectionErrors.size === 0) {
+      this.status = {
+        ...this.status,
+        state: 'idle',
+        lastSyncedAt: new Date().toISOString(),
+        errorMessage: undefined,
+      };
+    } else {
+      this.status = {
+        ...this.status,
+        state: 'idle',
+        lastSyncedAt: new Date().toISOString(),
+      };
+    }
     this.notifyStatus();
   }
 
   private handleSnapshotError(collectionName: string, err: any) {
-    console.warn(`Snapshot error on ${collectionName}:`, err);
-    this.status = {
-      ...this.status,
-      state: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
-      errorMessage: err?.message || `Erreur synchronisation ${collectionName}`,
-    };
+    const code = err?.code || 'unknown';
+    const message = err?.message || 'Erreur inconnue';
+
+    console.warn(`[FirestoreSync] Snapshot error on collection "${collectionName}":`, {
+      collection: collectionName,
+      code,
+      message,
+      operation: 'onSnapshot',
+    });
+
+    this.collectionErrors.set(collectionName, {
+      code,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+    this.healthyCollections.delete(collectionName);
+
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+
+    if (isOffline) {
+      this.status = {
+        ...this.status,
+        state: 'offline',
+        errorMessage: 'Mode hors connexion',
+      };
+    } else if (code === 'permission-denied') {
+      // Permission denied is critical (rules reject user access)
+      this.status = {
+        ...this.status,
+        state: 'error',
+        errorMessage: `Permissions insuffisantes sur ${collectionName}`,
+      };
+    } else if (this.healthyCollections.size === 0) {
+      // All listeners have failed
+      this.status = {
+        ...this.status,
+        state: 'error',
+        errorMessage: `Erreur synchronisation ${collectionName}: ${message}`,
+      };
+    } else {
+      // Some listeners are still healthy, keep sync operational
+      this.status = {
+        ...this.status,
+        state: 'idle',
+        errorMessage: undefined,
+      };
+    }
+
     this.notifyStatus();
   }
 
   /**
-   * Atomic synchronization of all changes made in AppContext to Firestore
+   * Atomic synchronization of all changes made in AppContext to Firestore.
+   * Every object is systematically sanitized to remove undefined values.
    */
   public async syncStateChanges(prev: AppState, next: AppState): Promise<void> {
     const user = auth.currentUser;
@@ -538,10 +659,11 @@ export class FirestoreSyncService {
       // 1. Settings
       if (JSON.stringify(prev.settings) !== JSON.stringify(next.settings)) {
         const ref = doc(db, 'users', user.uid, 'settings', 'company');
-        batch.set(ref, {
+        const sanitizedSettings = sanitizeForFirestore({
           ...next.settings,
           updatedAt: new Date().toISOString(),
-        }, { merge: true });
+        });
+        batch.set(ref, sanitizedSettings, { merge: true });
         opCount++;
         await commitAndResetIfNeeded();
       }
@@ -561,10 +683,11 @@ export class FirestoreSyncService {
           JSON.stringify(prevP) !== JSON.stringify(nextP)
         ) {
           const ref = doc(db, 'users', user.uid, 'products', id);
-          batch.set(ref, {
+          const sanitizedProduct = sanitizeForFirestore({
             ...nextP,
             updatedAt: nextP.updatedAt || new Date().toISOString(),
           });
+          batch.set(ref, sanitizedProduct);
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -585,7 +708,7 @@ export class FirestoreSyncService {
       for (const m of next.movements) {
         if (!prevMovementIds.has(m.id)) {
           const ref = doc(db, 'users', user.uid, 'movements', m.id);
-          batch.set(ref, m);
+          batch.set(ref, sanitizeForFirestore(m));
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -599,10 +722,11 @@ export class FirestoreSyncService {
         const prevC = prevClientMap.get(id);
         if (!prevC || JSON.stringify(prevC) !== JSON.stringify(nextC)) {
           const ref = doc(db, 'users', user.uid, 'clients', id);
-          batch.set(ref, {
+          const sanitizedClient = sanitizeForFirestore({
             ...nextC,
             updatedAt: nextC.updatedAt || new Date().toISOString(),
           });
+          batch.set(ref, sanitizedClient);
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -626,10 +750,11 @@ export class FirestoreSyncService {
         const prevI = prevInvoiceMap.get(id);
         if (!prevI || JSON.stringify(prevI) !== JSON.stringify(nextI)) {
           const ref = doc(db, 'users', user.uid, 'invoices', id);
-          batch.set(ref, {
+          const sanitizedInvoice = sanitizeForFirestore({
             ...nextI,
             updatedAt: nextI.updatedAt || new Date().toISOString(),
           });
+          batch.set(ref, sanitizedInvoice);
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -653,10 +778,11 @@ export class FirestoreSyncService {
         const prevQ = prevQuoteMap.get(id);
         if (!prevQ || JSON.stringify(prevQ) !== JSON.stringify(nextQ)) {
           const ref = doc(db, 'users', user.uid, 'quotes', id);
-          batch.set(ref, {
+          const sanitizedQuote = sanitizeForFirestore({
             ...nextQ,
             updatedAt: nextQ.updatedAt || new Date().toISOString(),
           });
+          batch.set(ref, sanitizedQuote);
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -677,7 +803,7 @@ export class FirestoreSyncService {
       for (const p of next.payments) {
         if (!prevPaymentIds.has(p.id)) {
           const ref = doc(db, 'users', user.uid, 'payments', p.id);
-          batch.set(ref, p);
+          batch.set(ref, sanitizeForFirestore(p));
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -691,7 +817,7 @@ export class FirestoreSyncService {
         const prevCat = prevCatMap.get(id);
         if (!prevCat || JSON.stringify(prevCat) !== JSON.stringify(nextCat)) {
           const ref = doc(db, 'users', user.uid, 'categories', id);
-          batch.set(ref, nextCat);
+          batch.set(ref, sanitizeForFirestore(nextCat));
           opCount++;
           await commitAndResetIfNeeded();
         }
@@ -710,13 +836,29 @@ export class FirestoreSyncService {
         await batch.commit();
       }
 
-      this.markSynchronized();
+      this.status = {
+        ...this.status,
+        state: 'idle',
+        lastSyncedAt: new Date().toISOString(),
+        errorMessage: undefined,
+      };
+      this.notifyStatus();
     } catch (err: any) {
-      console.warn('Sync state changes error:', err);
+      const code = err?.code || 'unknown';
+      const message = err?.message || 'Erreur lors de la synchronisation';
+      console.warn('[FirestoreSync] syncStateChanges error:', {
+        operation: 'writeBatch.commit',
+        code,
+        message,
+        error: err,
+      });
+
       this.status = {
         ...this.status,
         state: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
-        errorMessage: err?.message || 'Erreur lors de la synchronisation',
+        errorMessage: code === 'permission-denied'
+          ? 'Permissions insuffisantes pour enregistrer dans Firestore'
+          : message,
       };
       this.notifyStatus();
     }
@@ -728,13 +870,17 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'products', product.id);
-      await setDoc(ref, {
+      await setDoc(ref, sanitizeForFirestore({
         ...product,
         updatedAt: product.updatedAt || new Date().toISOString(),
+      }));
+      this.markCollectionHealthy('products');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncProduct queued or failed:', {
+        operation: 'syncProduct',
+        productId: product.id,
+        error: e,
       });
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync product queued offline:', e);
     }
   }
 
@@ -744,9 +890,13 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'products', productId);
       await deleteDoc(ref);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync deleteProduct queued offline:', e);
+      this.markCollectionHealthy('products');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteProduct failed:', {
+        operation: 'deleteProduct',
+        productId,
+        error: e,
+      });
     }
   }
 
@@ -755,10 +905,14 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'movements', movement.id);
-      await setDoc(ref, movement);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync movement queued offline:', e);
+      await setDoc(ref, sanitizeForFirestore(movement));
+      this.markCollectionHealthy('movements');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncStockMovement failed:', {
+        operation: 'syncStockMovement',
+        movementId: movement.id,
+        error: e,
+      });
     }
   }
 
@@ -767,13 +921,17 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'clients', client.id);
-      await setDoc(ref, {
+      await setDoc(ref, sanitizeForFirestore({
         ...client,
         updatedAt: client.updatedAt || new Date().toISOString(),
+      }));
+      this.markCollectionHealthy('clients');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncClient failed:', {
+        operation: 'syncClient',
+        clientId: client.id,
+        error: e,
       });
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync client queued offline:', e);
     }
   }
 
@@ -783,9 +941,13 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'clients', clientId);
       await deleteDoc(ref);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync deleteClient queued offline:', e);
+      this.markCollectionHealthy('clients');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteClient failed:', {
+        operation: 'deleteClient',
+        clientId,
+        error: e,
+      });
     }
   }
 
@@ -794,13 +956,17 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'invoices', invoice.id);
-      await setDoc(ref, {
+      await setDoc(ref, sanitizeForFirestore({
         ...invoice,
         updatedAt: invoice.updatedAt || new Date().toISOString(),
+      }));
+      this.markCollectionHealthy('invoices');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncInvoice failed:', {
+        operation: 'syncInvoice',
+        invoiceId: invoice.id,
+        error: e,
       });
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync invoice queued offline:', e);
     }
   }
 
@@ -810,9 +976,13 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'invoices', invoiceId);
       await deleteDoc(ref);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync deleteInvoice queued offline:', e);
+      this.markCollectionHealthy('invoices');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteInvoice failed:', {
+        operation: 'deleteInvoice',
+        invoiceId,
+        error: e,
+      });
     }
   }
 
@@ -821,13 +991,17 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'quotes', quote.id);
-      await setDoc(ref, {
+      await setDoc(ref, sanitizeForFirestore({
         ...quote,
         updatedAt: quote.updatedAt || new Date().toISOString(),
+      }));
+      this.markCollectionHealthy('quotes');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncQuote failed:', {
+        operation: 'syncQuote',
+        quoteId: quote.id,
+        error: e,
       });
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync quote queued offline:', e);
     }
   }
 
@@ -837,9 +1011,13 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'quotes', quoteId);
       await deleteDoc(ref);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync deleteQuote queued offline:', e);
+      this.markCollectionHealthy('quotes');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteQuote failed:', {
+        operation: 'deleteQuote',
+        quoteId,
+        error: e,
+      });
     }
   }
 
@@ -848,10 +1026,14 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'payments', payment.id);
-      await setDoc(ref, payment);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync payment queued offline:', e);
+      await setDoc(ref, sanitizeForFirestore(payment));
+      this.markCollectionHealthy('payments');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncPayment failed:', {
+        operation: 'syncPayment',
+        paymentId: payment.id,
+        error: e,
+      });
     }
   }
 
@@ -860,13 +1042,16 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'settings', 'company');
-      await setDoc(ref, {
+      await setDoc(ref, sanitizeForFirestore({
         ...settings,
         updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync settings queued offline:', e);
+      }), { merge: true });
+      this.markCollectionHealthy('settings');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncSettings failed:', {
+        operation: 'syncSettings',
+        error: e,
+      });
     }
   }
 
@@ -875,10 +1060,14 @@ export class FirestoreSyncService {
     if (!user) return;
     try {
       const ref = doc(db, 'users', user.uid, 'categories', category.id);
-      await setDoc(ref, category);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync category queued offline:', e);
+      await setDoc(ref, sanitizeForFirestore(category));
+      this.markCollectionHealthy('categories');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncCategory failed:', {
+        operation: 'syncCategory',
+        categoryId: category.id,
+        error: e,
+      });
     }
   }
 
@@ -888,9 +1077,13 @@ export class FirestoreSyncService {
     try {
       const ref = doc(db, 'users', user.uid, 'categories', categoryId);
       await deleteDoc(ref);
-      this.markSynchronized();
-    } catch (e) {
-      console.warn('Sync deleteCategory queued offline:', e);
+      this.markCollectionHealthy('categories');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteCategory failed:', {
+        operation: 'deleteCategory',
+        categoryId,
+        error: e,
+      });
     }
   }
 }
