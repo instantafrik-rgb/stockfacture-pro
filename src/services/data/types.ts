@@ -126,6 +126,8 @@ export interface IDataRepository {
   loadFullState(): Promise<AppState | null>;
   saveFullState(state: AppState): Promise<boolean>;
   clearAll?(): Promise<void>;
+  clearAccountCache?(userId?: string | null): Promise<void>;
+  setUserScope(userId: string | null): void;
   exportData?(state: AppState): void;
 
   // Sync lifecycle (Prepared for Firebase step)

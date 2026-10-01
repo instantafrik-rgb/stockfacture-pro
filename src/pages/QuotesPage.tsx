@@ -22,7 +22,6 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { generateQuotePdf } from '../pdf/documentPdf';
 import { FreeLineModal } from '../components/modals/FreeLineModal';
-import { Phase3TestModal } from '../components/modals/Phase3TestModal';
 
 export const QuotesPage: React.FC = () => {
   const {
@@ -42,7 +41,6 @@ export const QuotesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<QuoteStatus | 'all'>('all');
 
   // New Quote Modal
-  const [showTestModal, setShowTestModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFreeLineModal, setShowFreeLineModal] = useState(false);
   const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null);
@@ -700,12 +698,6 @@ export const QuotesPage: React.FC = () => {
         isDestructive
         onConfirm={confirmDelete}
         onCancel={() => setQuoteToDelete(null)}
-      />
-
-      {/* Phase 3 Test Modal */}
-      <Phase3TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
       />
     </div>
   );

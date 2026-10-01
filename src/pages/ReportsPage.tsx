@@ -18,9 +18,13 @@ import {
   Percent,
   Layers,
   FileSpreadsheet,
+  ArrowDownRight,
+  AlertTriangle,
+  HeartHandshake,
+  User,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
-import { formatCurrency, formatDate, getTodayDateString } from '../utils/formatters';
+import { formatCurrency, formatDate, getTodayDateString, toLocalDateString } from '../utils/formatters';
 import { calculateStockValue } from '../utils/calculations';
 import {
   calculateFinancialMetrics,
@@ -28,7 +32,6 @@ import {
   calculateProductPerformances,
 } from '../utils/reportsAnalytics';
 import { CashClosureModal } from '../components/modals/CashClosureModal';
-import { Phase5TestModal } from '../components/modals/Phase5TestModal';
 import { CashRegisterClosure } from '../types';
 
 export const ReportsPage: React.FC = () => {
@@ -48,9 +51,11 @@ export const ReportsPage: React.FC = () => {
   // Top products sort
   const [productSortBy, setProductSortBy] = useState<'revenue' | 'volume' | 'profit'>('revenue');
 
+  // Non-commercial exits filter
+  const [nonCommercialFilter, setNonCommercialFilter] = useState<'all' | 'loss' | 'defective' | 'donation'>('all');
+
   // Modals
   const [showClosureModal, setShowClosureModal] = useState(false);
-  const [showTestModal, setShowTestModal] = useState(false);
   const [localClosures, setLocalClosures] = useState<CashRegisterClosure[]>(() => state.closures || []);
 
   // Filter invoices according to selected period
@@ -58,37 +63,46 @@ export const ReportsPage: React.FC = () => {
     const today = getTodayDateString();
     return state.invoices.filter((inv) => {
       if (inv.status === 'cancelled') return false;
+      const invDate = toLocalDateString(inv.date || inv.createdAt);
+      if (!invDate) return false;
 
       if (period === 'all') return true;
 
       if (period === 'today') {
-        return inv.date === today;
+        return invDate === today;
       }
 
       if (period === '7') {
         const d = new Date();
         d.setDate(d.getDate() - 7);
-        return inv.date >= d.toISOString().slice(0, 10);
+        const limitStr = toLocalDateString(d);
+        return invDate >= limitStr && invDate <= today;
       }
 
       if (period === '30') {
         const d = new Date();
         d.setDate(d.getDate() - 30);
-        return inv.date >= d.toISOString().slice(0, 10);
+        const limitStr = toLocalDateString(d);
+        return invDate >= limitStr && invDate <= today;
       }
 
       if (period === 'this_month') {
         const monthPrefix = today.slice(0, 7); // YYYY-MM
-        return inv.date.startsWith(monthPrefix);
+        return invDate.startsWith(monthPrefix);
       }
 
       if (period === 'this_year') {
         const yearPrefix = today.slice(0, 4); // YYYY
-        return inv.date.startsWith(yearPrefix);
+        return invDate.startsWith(yearPrefix);
       }
 
       if (period === 'custom') {
-        return inv.date >= customStartDate && inv.date <= customEndDate;
+        if (customStartDate && customEndDate) {
+          return invDate >= customStartDate && invDate <= customEndDate;
+        }
+        if (customStartDate) return invDate >= customStartDate;
+        if (customEndDate) return invDate <= customEndDate;
+        return true;
       }
 
       return true;
@@ -99,30 +113,56 @@ export const ReportsPage: React.FC = () => {
   const filteredPayments = useMemo(() => {
     const today = getTodayDateString();
     return state.payments.filter((p) => {
+      const pDate = toLocalDateString(p.date || p.createdAt);
+      if (!pDate) return false;
+
       if (period === 'all') return true;
-      if (period === 'today') return p.date === today;
+
+      if (period === 'today') {
+        return pDate === today;
+      }
+
       if (period === '7') {
         const d = new Date();
         d.setDate(d.getDate() - 7);
-        return p.date >= d.toISOString().slice(0, 10);
+        const limitStr = toLocalDateString(d);
+        return pDate >= limitStr && pDate <= today;
       }
+
       if (period === '30') {
         const d = new Date();
         d.setDate(d.getDate() - 30);
-        return p.date >= d.toISOString().slice(0, 10);
+        const limitStr = toLocalDateString(d);
+        return pDate >= limitStr && pDate <= today;
       }
+
       if (period === 'this_month') {
-        return p.date.startsWith(today.slice(0, 7));
+        const monthPrefix = today.slice(0, 7); // YYYY-MM
+        return pDate.startsWith(monthPrefix);
       }
+
       if (period === 'this_year') {
-        return p.date.startsWith(today.slice(0, 4));
+        const yearPrefix = today.slice(0, 4); // YYYY
+        return pDate.startsWith(yearPrefix);
       }
+
       if (period === 'custom') {
-        return p.date >= customStartDate && p.date <= customEndDate;
+        if (customStartDate && customEndDate) {
+          return pDate >= customStartDate && pDate <= customEndDate;
+        }
+        if (customStartDate) return pDate >= customStartDate;
+        if (customEndDate) return pDate <= customEndDate;
+        return true;
       }
+
       return true;
     });
   }, [state.payments, period, customStartDate, customEndDate]);
+
+  // Total amount actually collected in the filtered payments
+  const totalPaymentsAmount = useMemo(() => {
+    return filteredPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [filteredPayments]);
 
   // Core analytics metrics
   const financialMetrics = useMemo(() => {
@@ -150,6 +190,102 @@ export const ReportsPage: React.FC = () => {
   const stockValuation = useMemo(() => {
     return calculateStockValue(state.products);
   }, [state.products]);
+
+  // Filter stock movements according to selected period
+  const filteredMovements = useMemo(() => {
+    const today = getTodayDateString();
+    return state.movements.filter((m) => {
+      const mDate = toLocalDateString(m.createdAt);
+      if (!mDate) return false;
+
+      if (period === 'all') return true;
+      if (period === 'today') return mDate === today;
+      if (period === '7') {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        return mDate >= toLocalDateString(d) && mDate <= today;
+      }
+      if (period === '30') {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return mDate >= toLocalDateString(d) && mDate <= today;
+      }
+      if (period === 'this_month') return mDate.startsWith(today.slice(0, 7));
+      if (period === 'this_year') return mDate.startsWith(today.slice(0, 4));
+      if (period === 'custom') {
+        if (customStartDate && customEndDate) {
+          return mDate >= customStartDate && mDate <= customEndDate;
+        }
+        if (customStartDate) return mDate >= customStartDate;
+        if (customEndDate) return mDate <= customEndDate;
+        return true;
+      }
+      return true;
+    });
+  }, [state.movements, period, customStartDate, customEndDate]);
+
+  // Non-commercial stock exits (Don, Perte, Défectueux)
+  const nonCommercialExits = useMemo(() => {
+    return filteredMovements.filter(
+      (m) =>
+        m.type === 'out' &&
+        (m.reason === 'donation' || m.reason === 'loss' || m.reason === 'defective')
+    );
+  }, [filteredMovements]);
+
+  // Non-commercial exits metrics and costing
+  const nonCommercialMetrics = useMemo(() => {
+    let totalQty = 0;
+    let totalCostLoss = 0;
+    let lossesQty = 0;
+    let lossesCost = 0;
+    let defectiveQty = 0;
+    let defectiveCost = 0;
+    let donationQty = 0;
+    let donationCost = 0;
+
+    const productMap = new Map<string, { purchasePrice?: number; unit?: string }>();
+    state.products.forEach((p) => {
+      productMap.set(p.id, { purchasePrice: p.purchasePrice, unit: p.unit });
+    });
+
+    nonCommercialExits.forEach((m) => {
+      const pInfo = productMap.get(m.productId);
+      const unitCost = pInfo?.purchasePrice || 0;
+      const moveCost = m.quantity * unitCost;
+
+      totalQty += m.quantity;
+      totalCostLoss += moveCost;
+
+      if (m.reason === 'loss') {
+        lossesQty += m.quantity;
+        lossesCost += moveCost;
+      } else if (m.reason === 'defective') {
+        defectiveQty += m.quantity;
+        defectiveCost += moveCost;
+      } else if (m.reason === 'donation') {
+        donationQty += m.quantity;
+        donationCost += moveCost;
+      }
+    });
+
+    return {
+      totalQty,
+      totalCostLoss,
+      lossesQty,
+      lossesCost,
+      defectiveQty,
+      defectiveCost,
+      donationQty,
+      donationCost,
+    };
+  }, [nonCommercialExits, state.products]);
+
+  // Filtered non-commercial list according to chip
+  const displayedNonCommercialExits = useMemo(() => {
+    if (nonCommercialFilter === 'all') return nonCommercialExits;
+    return nonCommercialExits.filter((m) => m.reason === nonCommercialFilter);
+  }, [nonCommercialExits, nonCommercialFilter]);
 
   const handleSaveClosure = (closure: CashRegisterClosure) => {
     setLocalClosures((prev) => [closure, ...prev]);
@@ -302,7 +438,7 @@ export const ReportsPage: React.FC = () => {
               {curr(financialMetrics.totalBilled)}
             </div>
             <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
-              <span>Encaissé : <strong className="text-emerald-600">{curr(financialMetrics.totalCollected)}</strong></span>
+              <span>Encaissé : <strong className="text-emerald-600">{curr(totalPaymentsAmount)}</strong></span>
               {financialMetrics.totalReceivables > 0 && (
                 <span>Dû : <strong className="text-amber-600">{curr(financialMetrics.totalReceivables)}</strong></span>
               )}
@@ -376,9 +512,14 @@ export const ReportsPage: React.FC = () => {
                 Encaissements par Mode de Paiement
               </h3>
             </div>
-            <span className="text-xs font-bold text-slate-400">
-              {filteredPayments.length} paiement(s)
-            </span>
+            <div className="text-right">
+              <span className="text-sm font-black text-emerald-600 dark:text-emerald-400 font-mono block">
+                {curr(totalPaymentsAmount)}
+              </span>
+              <span className="text-[10px] font-bold text-slate-400">
+                {filteredPayments.length} paiement(s)
+              </span>
+            </div>
           </div>
 
           {paymentBreakdown.length === 0 ? (
@@ -581,17 +722,202 @@ export const ReportsPage: React.FC = () => {
         )}
       </div>
 
+      {/* 6. Sorties de Stock Non Commerciales (Dons, Pertes, Défectueux) */}
+      <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
+              <ArrowDownRight className="w-5 h-5 stroke-[2.5]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Sorties de Stock Non Commerciales
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                  Hors Chiffre d'Affaires
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Traçabilité des dons, pertes et défectueux (le stock réel diminue sans générer de vente commerciale)
+              </p>
+            </div>
+          </div>
+
+          {/* Reason Filter Chips */}
+          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold self-start sm:self-auto flex-wrap">
+            <button
+              type="button"
+              onClick={() => setNonCommercialFilter('all')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                nonCommercialFilter === 'all'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                  : 'text-slate-500'
+              }`}
+            >
+              Toutes ({nonCommercialExits.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setNonCommercialFilter('loss')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                nonCommercialFilter === 'loss'
+                  ? 'bg-rose-500 text-white shadow-xs'
+                  : 'text-slate-500'
+              }`}
+            >
+              Pertes ({nonCommercialMetrics.lossesQty})
+            </button>
+            <button
+              type="button"
+              onClick={() => setNonCommercialFilter('defective')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                nonCommercialFilter === 'defective'
+                  ? 'bg-amber-500 text-white shadow-xs'
+                  : 'text-slate-500'
+              }`}
+            >
+              Défectueux ({nonCommercialMetrics.defectiveQty})
+            </button>
+            <button
+              type="button"
+              onClick={() => setNonCommercialFilter('donation')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                nonCommercialFilter === 'donation'
+                  ? 'bg-indigo-500 text-white shadow-xs'
+                  : 'text-slate-500'
+              }`}
+            >
+              Dons ({nonCommercialMetrics.donationQty})
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Summary Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-2xl bg-rose-50/60 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/40">
+            <div className="text-[11px] font-bold text-rose-800 dark:text-rose-300 uppercase">Pertes / Vols</div>
+            <div className="text-lg font-black font-mono text-rose-600 dark:text-rose-400 mt-1">
+              {nonCommercialMetrics.lossesQty} unité(s)
+            </div>
+            <div className="text-xs text-rose-700/80 dark:text-rose-300/80 font-medium">
+              Coût achat : {curr(nonCommercialMetrics.lossesCost)}
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/40">
+            <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase">Articles Défectueux</div>
+            <div className="text-lg font-black font-mono text-amber-600 dark:text-amber-400 mt-1">
+              {nonCommercialMetrics.defectiveQty} unité(s)
+            </div>
+            <div className="text-xs text-amber-700/80 dark:text-amber-300/80 font-medium">
+              Coût achat : {curr(nonCommercialMetrics.defectiveCost)}
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/40">
+            <div className="text-[11px] font-bold text-indigo-800 dark:text-indigo-300 uppercase">Dons / Gratuités</div>
+            <div className="text-lg font-black font-mono text-indigo-600 dark:text-indigo-400 mt-1">
+              {nonCommercialMetrics.donationQty} unité(s)
+            </div>
+            <div className="text-xs text-indigo-700/80 dark:text-indigo-300/80 font-medium">
+              Coût achat : {curr(nonCommercialMetrics.donationCost)}
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+            <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase">Total Sorties Hors CA</div>
+            <div className="text-lg font-black font-mono text-slate-900 dark:text-white mt-1">
+              {nonCommercialMetrics.totalQty} unité(s)
+            </div>
+            <div className="text-xs text-slate-500 font-medium">
+              Impact financier : -{curr(nonCommercialMetrics.totalCostLoss)}
+            </div>
+          </div>
+        </div>
+
+        {/* Non-Commercial Exits Table */}
+        {displayedNonCommercialExits.length === 0 ? (
+          <div className="py-10 text-center text-xs text-slate-400">
+            Aucune sortie non commerciale enregistrée sur cette période
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                <tr>
+                  <th className="py-3 px-3">Date & Heure</th>
+                  <th className="py-3 px-3">Produit</th>
+                  <th className="py-3 px-3 text-center">Motif</th>
+                  <th className="py-3 px-3 text-center">Quantité sortie</th>
+                  <th className="py-3 px-3">Utilisateur / Opérateur</th>
+                  <th className="py-3 px-3">Note / Réf</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {displayedNonCommercialExits.map((m) => {
+                  const reasonLabel =
+                    m.reason === 'loss'
+                      ? 'Perte'
+                      : m.reason === 'defective'
+                      ? 'Article défectueux'
+                      : 'Don';
+                  const badgeColor =
+                    m.reason === 'loss'
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                      : m.reason === 'defective'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                      : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300';
+
+                  return (
+                    <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
+                      <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
+                        {formatDate(m.createdAt)}
+                      </td>
+                      <td className="py-3 px-3 font-bold text-slate-900 dark:text-white">
+                        {m.productName}
+                      </td>
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${badgeColor}`}>
+                          {reasonLabel}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold font-mono text-rose-600 dark:text-rose-400">
+                        -{m.quantity}
+                      </td>
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{m.userName || 'Responsable Stock'}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-500 text-[11px]">
+                        {m.note || m.referenceId ? (
+                          <span>
+                            {m.note}
+                            {m.note && m.referenceId && ' • '}
+                            {m.referenceId && (
+                              <span className="font-mono text-slate-400">({m.referenceId})</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 dark:text-slate-600 italic">Aucune note</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Cash Closure Modal */}
       <CashClosureModal
         isOpen={showClosureModal}
         onClose={() => setShowClosureModal(false)}
         onSaveClosure={handleSaveClosure}
-      />
-
-      {/* Phase 5 Test Modal */}
-      <Phase5TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
       />
     </div>
   );

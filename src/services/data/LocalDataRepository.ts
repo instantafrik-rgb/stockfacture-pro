@@ -277,6 +277,14 @@ export class LocalDataRepository implements IDataRepository {
     return success;
   }
 
+  setUserScope(userId: string | null): void {
+    storageService.setUserScope(userId);
+  }
+
+  async clearAccountCache(userId?: string | null): Promise<void> {
+    await storageService.clearAccountCache(userId);
+  }
+
   async clearAll(): Promise<void> {
     await storageService.clearAll();
   }

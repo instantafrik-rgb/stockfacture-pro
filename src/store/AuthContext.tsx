@@ -28,7 +28,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { state } = useApp();
+  const { state, resetStateOnLogout, reloadStateForUser } = useApp();
   const stateRef = React.useRef(state);
   stateRef.current = state;
 
@@ -55,6 +55,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError(null);
 
       if (currentUser) {
+        // Scope storage to this user ID
+        dataRepository.setUserScope(currentUser.uid);
+        // Immediately reload local cache for this user account
+        if (reloadStateForUser) {
+          await reloadStateForUser(currentUser.uid);
+        }
         // Start real-time Firestore listeners for this user
         firestoreSyncService.startSync(currentUser.uid);
 
@@ -73,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setHasLocalDataToMigrate(false);
         }
       } else {
+        dataRepository.setUserScope(null);
         firestoreSyncService.stopSync();
         setHasLocalDataToMigrate(false);
       }
@@ -95,12 +102,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOutUser = useCallback(async () => {
     try {
       firestoreSyncService.stopSync();
+      dataRepository.setUserScope(null);
+      if (resetStateOnLogout) {
+        await resetStateOnLogout();
+      }
       await firebaseLogOut();
       setUser(null);
     } catch (err: any) {
       console.error('Sign out error:', err);
     }
-  }, []);
+  }, [resetStateOnLogout]);
 
   const migrateLocalDataToCloud = useCallback(async (): Promise<boolean> => {
     if (!user) return false;

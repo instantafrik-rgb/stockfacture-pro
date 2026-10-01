@@ -30,6 +30,8 @@ import {
   onSnapshot,
   Unsubscribe,
   writeBatch,
+  runTransaction,
+  increment,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import {
@@ -43,6 +45,8 @@ import {
   CompanySettings,
   Category,
   CashRegisterClosure,
+  RestockRequest,
+  SaleReturn,
 } from '../../types';
 import { SyncStatus } from './types';
 
@@ -362,6 +366,26 @@ export class FirestoreSyncService {
         for (const cl of localState.closures) {
           const ref = doc(db, 'users', userId, 'closures', cl.id);
           batch.set(ref, sanitizeForFirestore(cl));
+          count++;
+          await commitAndResetBatchIfNeeded();
+        }
+      }
+
+      // Restock Requests (Clients à relancer)
+      if (localState.restockRequests) {
+        for (const rr of localState.restockRequests) {
+          const ref = doc(db, 'users', userId, 'restockRequests', rr.id);
+          batch.set(ref, sanitizeForFirestore(rr));
+          count++;
+          await commitAndResetBatchIfNeeded();
+        }
+      }
+
+      // Sale Returns (Retours, avoirs, échanges)
+      if (localState.returns) {
+        for (const ret of localState.returns) {
+          const ref = doc(db, 'users', userId, 'returns', ret.id);
+          batch.set(ref, sanitizeForFirestore(ret));
           count++;
           await commitAndResetBatchIfNeeded();
         }
@@ -735,6 +759,54 @@ export class FirestoreSyncService {
       (err) => this.handleSnapshotError('closures', err)
     );
     this.activeSubscriptions.push(unsubClosures);
+
+    // 10. Restock Requests (Clients à relancer) listener
+    const restockRef = collection(db, 'users', userId, 'restockRequests');
+    const unsubRestock = onSnapshot(
+      restockRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteRequests: RestockRequest[] = [];
+          snap.forEach((d) => {
+            remoteRequests.push({ ...(d.data() as RestockRequest), id: d.id });
+          });
+
+          remoteRequests.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
+            ...prev,
+            restockRequests: remoteRequests,
+          }));
+        }
+        this.markCollectionHealthy('restockRequests');
+      },
+      (err) => this.handleSnapshotError('restockRequests', err)
+    );
+    this.activeSubscriptions.push(unsubRestock);
+
+    // 11. Sale Returns (Retours, avoirs, échanges) listener
+    const returnsRef = collection(db, 'users', userId, 'returns');
+    const unsubReturns = onSnapshot(
+      returnsRef,
+      (snap) => {
+        if (this.onRemoteUpdateCallback) {
+          const remoteReturns: SaleReturn[] = [];
+          snap.forEach((d) => {
+            remoteReturns.push({ ...(d.data() as SaleReturn), id: d.id });
+          });
+
+          remoteReturns.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+          this.onRemoteUpdateCallback((prev) => ({
+            ...prev,
+            returns: remoteReturns,
+          }));
+        }
+        this.markCollectionHealthy('returns');
+      },
+      (err) => this.handleSnapshotError('returns', err)
+    );
+    this.activeSubscriptions.push(unsubReturns);
   }
 
   // --- Auto-upload helpers for unmigrated local collections ---
@@ -1177,6 +1249,31 @@ export class FirestoreSyncService {
         }
       }
 
+      // 10. Returns (Added / Updated / Deleted)
+      if (next.returns) {
+        const prevReturnsMap = new Map((prev.returns || []).map((r) => [r.id, r]));
+        const nextReturnsMap = new Map(next.returns.map((r) => [r.id, r]));
+
+        for (const [id, nextRet] of nextReturnsMap) {
+          const prevRet = prevReturnsMap.get(id);
+          if (!prevRet || JSON.stringify(prevRet) !== JSON.stringify(nextRet)) {
+            const ref = doc(db, 'users', user.uid, 'returns', id);
+            batch.set(ref, sanitizeForFirestore(nextRet));
+            opCount++;
+            await commitAndResetIfNeeded();
+          }
+        }
+
+        for (const [id] of prevReturnsMap) {
+          if (!nextReturnsMap.has(id)) {
+            const ref = doc(db, 'users', user.uid, 'returns', id);
+            batch.delete(ref);
+            opCount++;
+            await commitAndResetIfNeeded();
+          }
+        }
+      }
+
       if (opCount > 0) {
         await batch.commit();
       }
@@ -1390,6 +1487,288 @@ export class FirestoreSyncService {
       this.markCollectionHealthy('closures');
     } catch (e: any) {
       console.warn('[FirestoreSync] syncClosure failed:', { closureId: closure.id, error: e });
+    }
+  }
+
+  public async syncRestockRequest(request: RestockRequest): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const ref = doc(db, 'users', user.uid, 'restockRequests', request.id);
+      await setDoc(ref, sanitizeForFirestore(request));
+      this.markCollectionHealthy('restockRequests');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncRestockRequest failed:', { requestId: request.id, error: e });
+    }
+  }
+
+  public async deleteRestockRequest(requestId: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const ref = doc(db, 'users', user.uid, 'restockRequests', requestId);
+      await deleteDoc(ref);
+      this.markCollectionHealthy('restockRequests');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteRestockRequest failed:', { requestId, error: e });
+    }
+  }
+
+  public async syncReturn(saleReturn: SaleReturn): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const ref = doc(db, 'users', user.uid, 'returns', saleReturn.id);
+      await setDoc(ref, sanitizeForFirestore(saleReturn));
+      this.markCollectionHealthy('returns');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] syncReturn failed:', { returnId: saleReturn.id, error: e });
+    }
+  }
+
+  public async deleteReturn(returnId: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const ref = doc(db, 'users', user.uid, 'returns', returnId);
+      await deleteDoc(ref);
+      this.markCollectionHealthy('returns');
+    } catch (e: any) {
+      console.warn('[FirestoreSync] deleteReturn failed:', { returnId, error: e });
+    }
+  }
+
+  /**
+   * Complete resynchronization of a newly restored state to Firestore Cloud.
+   * Ensures all collections are fully written to the authenticated user's cloud database.
+   */
+  public async syncFullRestoredState(restoredState: AppState): Promise<boolean> {
+    const user = auth.currentUser;
+    if (!user) return true; // Local-only mode
+    return await this.migrateLocalToCloud(user.uid, restoredState);
+  }
+
+  /**
+   * Atomic Firestore transaction for a sale:
+   * 1. Reads latest cloud product documents.
+   * 2. Checks sufficiency if allowNegativeStock is false.
+   * 3. Atomically decrements product stock without lost updates.
+   * 4. Writes the invoice, payment, and movements all in the same atomic transaction.
+   */
+  public async commitSaleStockTransaction(params: {
+    userId: string;
+    invoice: Invoice;
+    payment?: PaymentRecord;
+    items: Array<{ productId?: string; designation: string; quantity: number; isFreeLine?: boolean }>;
+    movements: StockMovement[];
+    allowNegativeStock: boolean;
+    nextInvoiceNumber?: number;
+  }): Promise<{ success: boolean; error?: string; updatedStocks?: Record<string, number> }> {
+    try {
+      const { userId, invoice, payment, items, movements, allowNegativeStock, nextInvoiceNumber } = params;
+      const updatedStocks: Record<string, number> = {};
+
+      await runTransaction(db, async (transaction) => {
+        // Step 1: Read all catalog products involved in the sale
+        const productReads: Array<{ ref: any; currentStock: number; id: string; designation: string; qty: number }> = [];
+
+        for (const item of items) {
+          if (!item.isFreeLine && item.productId) {
+            const pRef = doc(db, 'users', userId, 'products', item.productId);
+            const pSnap = await transaction.get(pRef);
+            if (pSnap.exists()) {
+              const currentStock = Number(pSnap.data().stockQuantity) || 0;
+              productReads.push({
+                ref: pRef,
+                currentStock,
+                id: item.productId,
+                designation: item.designation,
+                qty: item.quantity,
+              });
+            }
+          }
+        }
+
+        // Step 2: Validate stock sufficiency if negative stock is disallowed
+        if (!allowNegativeStock) {
+          for (const pr of productReads) {
+            if (pr.currentStock < pr.qty) {
+              throw new Error(
+                `Stock insuffisant sur le Cloud pour "${pr.designation}". Disponible: ${pr.currentStock}, Demandé: ${pr.qty}.`
+              );
+            }
+          }
+        }
+
+        // Step 3: Perform atomic writes for all products
+        const nowIso = new Date().toISOString();
+        for (const pr of productReads) {
+          const newStock = pr.currentStock - pr.qty;
+          transaction.update(pr.ref, {
+            stockQuantity: newStock,
+            updatedAt: nowIso,
+          });
+          updatedStocks[pr.id] = newStock;
+        }
+
+        // Step 4: Save the invoice
+        const invRef = doc(db, 'users', userId, 'invoices', invoice.id);
+        transaction.set(invRef, sanitizeForFirestore({
+          ...invoice,
+          updatedAt: nowIso,
+        }));
+
+        // Step 5: Save payment if provided
+        if (payment) {
+          const payRef = doc(db, 'users', userId, 'payments', payment.id);
+          transaction.set(payRef, sanitizeForFirestore(payment));
+        }
+
+        // Step 6: Save each stock movement
+        for (const mov of movements) {
+          const movRef = doc(db, 'users', userId, 'movements', mov.id);
+          transaction.set(movRef, sanitizeForFirestore(mov));
+        }
+
+        // Step 7: Update next invoice number in settings
+        if (nextInvoiceNumber !== undefined) {
+          const settingsRef = doc(db, 'users', userId, 'settings', 'company');
+          transaction.set(settingsRef, { nextInvoiceNumber }, { merge: true });
+        }
+      });
+
+      this.markCollectionHealthy('products');
+      this.markCollectionHealthy('invoices');
+      this.markCollectionHealthy('movements');
+      if (payment) this.markCollectionHealthy('payments');
+
+      return { success: true, updatedStocks };
+    } catch (err: any) {
+      console.warn('[FirestoreSync] commitSaleStockTransaction error:', err);
+      return { success: false, error: err?.message || 'Erreur lors de la validation atomique du stock' };
+    }
+  }
+
+  /**
+   * Atomic Firestore transaction for manual stock movements and adjustments
+   */
+  public async commitStockMovementTransaction(params: {
+    userId: string;
+    movement: StockMovement;
+    type: 'in' | 'out' | 'adjustment';
+    quantity: number;
+    allowNegativeStock: boolean;
+  }): Promise<{ success: boolean; error?: string; newStock?: number }> {
+    try {
+      const { userId, movement, type, quantity, allowNegativeStock } = params;
+      let calculatedNewStock = movement.newStock;
+
+      await runTransaction(db, async (transaction) => {
+        const pRef = doc(db, 'users', userId, 'products', movement.productId);
+        const pSnap = await transaction.get(pRef);
+        if (!pSnap.exists()) {
+          throw new Error('Produit introuvable dans la base de données');
+        }
+
+        const currentStock = Number(pSnap.data().stockQuantity) || 0;
+        let targetStock = currentStock;
+
+        if (type === 'in') {
+          targetStock = currentStock + Math.max(0, quantity);
+        } else if (type === 'out') {
+          const moveQty = Math.max(0, quantity);
+          if (!allowNegativeStock && currentStock < moveQty) {
+            throw new Error(`Stock insuffisant (${currentStock} disponible). Le stock négatif est désactivé.`);
+          }
+          targetStock = currentStock - moveQty;
+        } else if (type === 'adjustment') {
+          targetStock = quantity;
+        }
+
+        calculatedNewStock = targetStock;
+        const nowIso = new Date().toISOString();
+
+        transaction.update(pRef, {
+          stockQuantity: targetStock,
+          updatedAt: nowIso,
+        });
+
+        const movRef = doc(db, 'users', userId, 'movements', movement.id);
+        transaction.set(movRef, sanitizeForFirestore({
+          ...movement,
+          previousStock: currentStock,
+          newStock: targetStock,
+        }));
+      });
+
+      this.markCollectionHealthy('products');
+      this.markCollectionHealthy('movements');
+
+      return { success: true, newStock: calculatedNewStock };
+    } catch (err: any) {
+      console.warn('[FirestoreSync] commitStockMovementTransaction error:', err);
+      return { success: false, error: err?.message || 'Erreur lors de l’ajustement de stock' };
+    }
+  }
+
+  /**
+   * Atomic Firestore transaction for invoice cancellation and stock recovery
+   */
+  public async commitCancelInvoiceTransaction(params: {
+    userId: string;
+    invoiceId: string;
+    itemsToRestore: Array<{ productId: string; quantity: number }>;
+    movements: StockMovement[];
+  }): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { userId, invoiceId, itemsToRestore, movements } = params;
+      const nowIso = new Date().toISOString();
+
+      await runTransaction(db, async (transaction) => {
+        // Read products
+        const pReads: Array<{ ref: any; currentStock: number; qty: number }> = [];
+        for (const item of itemsToRestore) {
+          const pRef = doc(db, 'users', userId, 'products', item.productId);
+          const pSnap = await transaction.get(pRef);
+          if (pSnap.exists()) {
+            pReads.push({
+              ref: pRef,
+              currentStock: Number(pSnap.data().stockQuantity) || 0,
+              qty: item.quantity,
+            });
+          }
+        }
+
+        // Restore stock
+        for (const pr of pReads) {
+          transaction.update(pr.ref, {
+            stockQuantity: pr.currentStock + pr.qty,
+            updatedAt: nowIso,
+          });
+        }
+
+        // Update invoice status
+        const invRef = doc(db, 'users', userId, 'invoices', invoiceId);
+        transaction.update(invRef, {
+          status: 'cancelled',
+          updatedAt: nowIso,
+        });
+
+        // Add return movements
+        for (const m of movements) {
+          const mRef = doc(db, 'users', userId, 'movements', m.id);
+          transaction.set(mRef, sanitizeForFirestore(m));
+        }
+      });
+
+      this.markCollectionHealthy('products');
+      this.markCollectionHealthy('invoices');
+      this.markCollectionHealthy('movements');
+
+      return { success: true };
+    } catch (err: any) {
+      console.warn('[FirestoreSync] commitCancelInvoiceTransaction error:', err);
+      return { success: false, error: err?.message || 'Erreur lors de l’annulation de la facture' };
     }
   }
 }

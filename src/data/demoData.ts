@@ -3,7 +3,7 @@
  * Spécialisation : Boutique d'accessoires de téléphonie et informatique
  */
 
-import { AppState, CompanySettings, Category, Product, Client, Invoice, PaymentRecord, StockMovement, Quote } from '../types';
+import { AppState, CompanySettings, Category, Product, Client, Invoice, PaymentRecord, StockMovement, Quote, RestockRequest } from '../types';
 
 export const defaultSettings: CompanySettings = {
   name: 'TechMobile & Informatique Pro',
@@ -44,6 +44,9 @@ export const initialEmptyState: AppState = {
   invoices: [],
   payments: [],
   quotes: [],
+  closures: [],
+  restockRequests: [],
+  returns: [],
   isLocked: false,
   hasCompletedOnboarding: false,
 };
@@ -621,6 +624,36 @@ export function getDemoState(): AppState {
     },
   ];
 
+  const restockRequests: RestockRequest[] = [
+    {
+      id: 'req-01',
+      clientId: 'cli-02',
+      clientName: 'Cabinet Dentaire Dr. Touré',
+      clientPhone: '+225 07 22 33 44 55',
+      productId: 'prod-12',
+      productName: 'Hub Adaptateur USB-C 7-en-1 (HDMI 4K, SD, USB 3.0)',
+      desiredQuantity: 2,
+      requestDate: '2026-09-24',
+      note: 'Pour équiper les postes du secrétariat dès réassort',
+      status: 'pending',
+      createdAt: '2026-09-24T10:30:00Z',
+      updatedAt: '2026-09-24T10:30:00Z',
+    },
+    {
+      id: 'req-02',
+      clientName: 'M. Ibrahim Koné',
+      clientPhone: '+225 05 66 77 88 99',
+      productId: 'prod-12',
+      productName: 'Hub Adaptateur USB-C 7-en-1 (HDMI 4K, SD, USB 3.0)',
+      desiredQuantity: 1,
+      requestDate: '2026-09-25',
+      note: 'Acompte proposé, préfère être prévenu par WhatsApp',
+      status: 'pending',
+      createdAt: '2026-09-25T14:15:00Z',
+      updatedAt: '2026-09-25T14:15:00Z',
+    },
+  ];
+
   return {
     settings: defaultSettings,
     categories,
@@ -630,6 +663,7 @@ export function getDemoState(): AppState {
     invoices,
     payments,
     quotes,
+    restockRequests,
     isLocked: false,
     hasCompletedOnboarding: true,
   };

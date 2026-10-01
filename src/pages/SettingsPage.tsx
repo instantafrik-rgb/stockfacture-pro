@@ -21,8 +21,9 @@ import { useApp } from '../store/AppContext';
 import { CurrencyPosition } from '../types';
 import { dataRepository } from '../services/data';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
-import { Phase1TestModal } from '../components/modals/Phase1TestModal';
 import { CloudAccountSection } from '../components/settings/CloudAccountSection';
+import { BackupRestoreSection } from '../components/settings/BackupRestoreSection';
+import { DailyNotificationSection } from '../components/settings/DailyNotificationSection';
 import { APP_VERSION } from '../version';
 
 export const SettingsPage: React.FC = () => {
@@ -38,7 +39,6 @@ export const SettingsPage: React.FC = () => {
   } = useApp();
 
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [showTestModal, setShowTestModal] = useState(false);
 
   // Form State
   const [name, setName] = useState(state.settings.name);
@@ -111,34 +111,6 @@ export const SettingsPage: React.FC = () => {
     setPinInput('');
   };
 
-  const handleExportJson = () => {
-    if (dataRepository.exportData) {
-      dataRepository.exportData(state);
-    }
-  };
-
-  const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        const ok = await importBackup(json);
-        if (ok) {
-          alert('Sauvegarde restaurée avec succès !');
-        } else {
-          alert('Fichier de sauvegarde invalide ou corrompu.');
-        }
-      } catch (err) {
-        alert('Erreur lors de la lecture du fichier JSON.');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-200">
       {/* 1. Header */}
@@ -148,23 +120,11 @@ export const SettingsPage: React.FC = () => {
             <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               Paramètres Généraux
             </h2>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
-              PHASE 1
-            </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
             Personnalisation de votre commerce, devise, TVA, préfixes et sécurité locale
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setShowTestModal(true)}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800 text-xs sm:text-sm font-bold shadow-xs transition-transform active:scale-95 self-start sm:self-auto min-h-[44px]"
-        >
-          <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          <span>🧪 Vérifier la Phase 1</span>
-        </button>
       </div>
 
       {savedSuccess && (
@@ -568,45 +528,27 @@ export const SettingsPage: React.FC = () => {
         )}
       </div>
 
-      {/* 6. Sauvegarde, Restauration & Données de Démo */}
+      {/* 6. Notifications & Rappels Quotidiens */}
+      <DailyNotificationSection />
+
+      {/* 7. Sauvegarde et Restauration Complète (Cloud & Fichier JSON) */}
+      <BackupRestoreSection />
+
+      {/* 8. Données de Démo & Réinitialisation */}
       <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-          <Database className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+          <Database className="w-5 h-5 text-slate-600 dark:text-slate-400" />
           <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-            Sauvegarde, Restauration & Données
+            Jeux d'essai & Réinitialisation d'urgence
           </h3>
         </div>
 
         <p className="text-xs text-slate-500">
-          Toutes vos données restent stockées localement sur cet appareil. Pensez à exporter régulièrement une sauvegarde JSON.
+          Vous pouvez charger un ensemble de données factices pour tester l'application ou vider l'ensemble du stockage local en cas de besoin.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          {/* Export JSON */}
-          <button
-            type="button"
-            onClick={handleExportJson}
-            className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold hover:bg-indigo-100 transition-all active:scale-95"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exporter une sauvegarde JSON</span>
-          </button>
-
-          {/* Import JSON */}
-          <label className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer transition-all active:scale-95">
-            <Upload className="w-4 h-4" />
-            <span>Restaurer depuis un fichier JSON</span>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImportJson}
-              className="hidden"
-            />
-          </label>
-        </div>
-
         {/* Demo Data & Reset */}
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           <button
             type="button"
             onClick={() => setShowLoadDemoConfirm(true)}
@@ -709,12 +651,6 @@ export const SettingsPage: React.FC = () => {
           setShowResetConfirm(false);
         }}
         onCancel={() => setShowResetConfirm(false)}
-      />
-
-      {/* Phase 1 Test Modal */}
-      <Phase1TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
       />
     </div>
   );

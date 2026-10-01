@@ -18,6 +18,11 @@ import {
   TrendingUp,
   ShieldCheck,
   CheckCircle2,
+  BellRing,
+  UserPlus,
+  ChevronRight,
+  Camera,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { Product, Category } from '../types';
@@ -26,7 +31,10 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { StockMovementModal } from '../components/modals/StockMovementModal';
 import { CategoryModal } from '../components/modals/CategoryModal';
-import { Phase1TestModal } from '../components/modals/Phase1TestModal';
+import { RestockRequestModal } from '../components/modals/RestockRequestModal';
+import { RestockRequestsDrawer } from '../components/modals/RestockRequestsDrawer';
+import { ProductThumbnail } from '../components/common/ProductThumbnail';
+import { compressImageFile } from '../utils/imageUtils';
 
 export const ProductsPage: React.FC = () => {
   const { state, addProduct, updateProduct, deleteProduct, selectedItemId, setSelectedItemId } =
@@ -41,12 +49,18 @@ export const ProductsPage: React.FC = () => {
   // Modals
   const [showAddEditModal, setShowAddEditModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [showTestModal, setShowTestModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [showStockModal, setShowStockModal] = useState(false);
   const [stockModalType, setStockModalType] = useState<'in' | 'out'>('in');
   const [targetProductForStock, setTargetProductForStock] = useState<Product | null>(null);
+  const [showRestockDrawer, setShowRestockDrawer] = useState(false);
+  const [showRestockAddModal, setShowRestockAddModal] = useState(false);
+  const [restockProductId, setRestockProductId] = useState<string | undefined>(undefined);
+
+  // Image upload state
+  const [formImageUrl, setFormImageUrl] = useState<string>('');
+  const [isUploadingImage, setIsUploadingImage] = useState<boolean>(false);
 
   // Form Fields
   const [formName, setFormName] = useState('');
@@ -122,6 +136,13 @@ export const ProductsPage: React.FC = () => {
     };
   }, [state.products]);
 
+  // Clients à relancer count
+  const pendingRestockCount = useMemo(() => {
+    return (state.restockRequests || []).filter(
+      (r) => r.status === 'pending' || r.status === 'available'
+    ).length;
+  }, [state.restockRequests]);
+
   // Selected product for 360° detail drawer
   const detailProduct = useMemo(() => {
     if (!selectedItemId) return null;
@@ -146,6 +167,7 @@ export const ProductsPage: React.FC = () => {
     setFormMinStockAlert(5);
     setFormUnit('pièce');
     setFormDescription('');
+    setFormImageUrl('');
     setFormError(null);
     setShowAddEditModal(true);
   };
@@ -162,6 +184,7 @@ export const ProductsPage: React.FC = () => {
     setFormMinStockAlert(p.minStockAlert || 5);
     setFormUnit(p.unit || 'pièce');
     setFormDescription(p.description || '');
+    setFormImageUrl(p.imageUrl || '');
     setFormError(null);
     setShowAddEditModal(true);
   };
@@ -220,6 +243,7 @@ export const ProductsPage: React.FC = () => {
         minStockAlert: Math.max(0, formMinStockAlert || 0),
         unit: formUnit.trim() || 'pièce',
         description: formDescription.trim() || undefined,
+        imageUrl: formImageUrl.trim() || undefined,
       });
     } else {
       // Create new
@@ -234,6 +258,7 @@ export const ProductsPage: React.FC = () => {
         minStockAlert: Math.max(0, formMinStockAlert || 5),
         unit: formUnit.trim() || 'pièce',
         description: formDescription.trim() || undefined,
+        imageUrl: formImageUrl.trim() || undefined,
       });
     }
 
@@ -255,20 +280,32 @@ export const ProductsPage: React.FC = () => {
       {/* 1. Header & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              Catalogue Produits & Référentiel
-            </h2>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
-              PHASE 1
-            </span>
-          </div>
+          <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            Catalogue Produits & Référentiel
+          </h2>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
             Gestion complète des articles, prix de vente, coûts d'achat, marges et alertes de stock
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              setRestockProductId(undefined);
+              setShowRestockDrawer(true);
+            }}
+            className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 text-amber-750 dark:text-amber-300 hover:bg-amber-500/20 border border-amber-300/80 dark:border-amber-800 text-xs sm:text-sm font-bold shadow-xs transition-all active:scale-95 min-h-[44px] cursor-pointer"
+          >
+            <BellRing className="w-4 h-4 text-amber-500" />
+            <span>Clients à relancer</span>
+            {pendingRestockCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white ml-0.5">
+                {pendingRestockCount}
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => setShowCategoryModal(true)}
@@ -515,6 +552,9 @@ export const ProductsPage: React.FC = () => {
             const marginPercent =
               p.sellingPrice > 0 ? Math.round((margin / p.sellingPrice) * 100) : 0;
             const category = state.categories.find((c) => c.id === p.categoryId);
+            const productRequests = (state.restockRequests || []).filter(
+              (r) => r.productId === p.id && (r.status === 'pending' || r.status === 'available')
+            );
 
             return (
               <div
@@ -525,15 +565,13 @@ export const ProductsPage: React.FC = () => {
                   {/* Top Bar: Icon + SKU + Status */}
                   <div className="flex items-start justify-between gap-2.5">
                     <div className="flex items-center gap-2.5 truncate">
-                      <div
-                        className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          backgroundColor: `${category?.color || '#3b82f6'}15`,
-                          color: category?.color || '#3b82f6',
-                        }}
-                      >
-                        <Package className="w-5 h-5" />
-                      </div>
+                      <ProductThumbnail
+                        imageUrl={p.imageUrl}
+                        name={p.name}
+                        categoryColor={category?.color}
+                        size="md"
+                        roundedClassName="rounded-2xl"
+                      />
 
                       <div className="truncate">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -611,10 +649,35 @@ export const ProductsPage: React.FC = () => {
                       {p.stockQuantity} {p.unit || 'pièce'}(s)
                     </span>
                   </div>
+
+                  {/* Restock waiting clients badge */}
+                  {productRequests.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRestockProductId(p.id);
+                        setShowRestockDrawer(true);
+                      }}
+                      className={`w-full mt-2 py-1 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                        p.stockQuantity > 0
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 hover:bg-emerald-200'
+                          : 'bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300 hover:bg-amber-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <BellRing className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                        <span>
+                          {productRequests.length} client(s){' '}
+                          {p.stockQuantity > 0 ? 'à relancer (En stock !)' : 'en attente'}
+                        </span>
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Bottom Actions */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1">
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -641,6 +704,18 @@ export const ProductsPage: React.FC = () => {
                     >
                       <ArrowDownRight className="w-3.5 h-3.5" />
                       <span>- Sortie</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRestockProductId(p.id);
+                        setShowRestockAddModal(true);
+                      }}
+                      className="p-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      title="Enregistrer un client en attente (Rupture)"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Relance</span>
                     </button>
                   </div>
 
@@ -680,7 +755,7 @@ export const ProductsPage: React.FC = () => {
                   {editingProduct ? 'Modifier le produit' : 'Créer un nouveau produit'}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Définition des prix, codes, marges et seuils d'alerte (Phase 1)
+                  Définition des prix, codes, marges et seuils d'alerte
                 </p>
               </div>
               <button
@@ -699,6 +774,60 @@ export const ProductsPage: React.FC = () => {
                   <span>{formError}</span>
                 </div>
               )}
+
+              {/* Photo du produit (Miniature) */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 space-y-2.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Photo du produit (Miniature catalogue)
+                </label>
+                <div className="flex items-center gap-3.5">
+                  <ProductThumbnail
+                    imageUrl={formImageUrl}
+                    name={formName || 'PR'}
+                    categoryColor={state.categories.find((c) => c.id === formCategoryId)?.color}
+                    size="xl"
+                    roundedClassName="rounded-2xl"
+                  />
+                  <div className="flex-1 space-y-1.5 min-w-0">
+                    <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shadow-2xs transition-all">
+                      <Camera className="w-4 h-4 text-indigo-600" />
+                      <span>{isUploadingImage ? 'Compression...' : formImageUrl ? 'Changer la photo' : 'Ajouter une photo'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={isUploadingImage}
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              setIsUploadingImage(true);
+                              const compressed = await compressImageFile(file, 240, 0.75);
+                              setFormImageUrl(compressed);
+                            } catch (err: any) {
+                              setFormError(err?.message || "Erreur lors du traitement de l'image.");
+                            } finally {
+                              setIsUploadingImage(false);
+                            }
+                          }
+                        }}
+                      />
+                    </label>
+                    {formImageUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setFormImageUrl('')}
+                        className="block text-xs font-bold text-rose-500 hover:underline"
+                      >
+                        Supprimer la photo
+                      </button>
+                    )}
+                    <p className="text-[10px] text-slate-400">
+                      Miniature compressée automatiquement (&lt; 25 Ko) pour un affichage instantané et synchronisé.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               {/* Name */}
               <div>
@@ -944,13 +1073,7 @@ export const ProductsPage: React.FC = () => {
         onClose={() => setShowCategoryModal(false)}
       />
 
-      {/* 8. Phase 1 Test & Validation Modal */}
-      <Phase1TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
-      />
-
-      {/* 9. Confirm Delete Dialog */}
+      {/* 8. Confirm Delete Dialog */}
       <ConfirmDialog
         isOpen={Boolean(productToDelete)}
         title="Supprimer le produit"
@@ -961,6 +1084,219 @@ export const ProductsPage: React.FC = () => {
         onConfirm={confirmDelete}
         onCancel={() => setProductToDelete(null)}
       />
+
+      {/* 9. Restock Requests Drawer */}
+      {showRestockDrawer && (
+        <RestockRequestsDrawer
+          isOpen={showRestockDrawer}
+          onClose={() => {
+            setShowRestockDrawer(false);
+            setRestockProductId(undefined);
+          }}
+          defaultProductId={restockProductId}
+        />
+      )}
+
+      {/* 10. Quick Restock Request Modal */}
+      {showRestockAddModal && (
+        <RestockRequestModal
+          isOpen={showRestockAddModal}
+          onClose={() => {
+            setShowRestockAddModal(false);
+            setRestockProductId(undefined);
+          }}
+          defaultProductId={restockProductId}
+        />
+      )}
+
+      {/* 11. Product 360° Detail Drawer */}
+      {detailProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-xl bg-white dark:bg-[#131B2E] rounded-3xl shadow-2xl border border-[#E8EDF2] dark:border-[#22304E] flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-[#E8EDF2] dark:border-[#22304E] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <ProductThumbnail
+                  imageUrl={detailProduct.imageUrl}
+                  name={detailProduct.name}
+                  categoryColor={state.categories.find((c) => c.id === detailProduct.categoryId)?.color}
+                  size="lg"
+                  roundedClassName="rounded-2xl"
+                />
+                <div className="truncate">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                      {detailProduct.sku || 'SANS-SKU'}
+                    </span>
+                    {detailProduct.stockQuantity <= 0 ? (
+                      <StatusBadge status="out_of_stock" />
+                    ) : detailProduct.stockQuantity <= detailProduct.minStockAlert ? (
+                      <StatusBadge status="low" />
+                    ) : (
+                      <StatusBadge status="in_stock" />
+                    )}
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-[#14213D] dark:text-white truncate mt-0.5">
+                    {detailProduct.name}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedItemId(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
+              {/* Pricing & Margins */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60">
+                  <span className="text-[10px] font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider block">
+                    Prix de vente
+                  </span>
+                  <div className="text-base font-black font-financial text-orange-600 dark:text-orange-400 mt-0.5">
+                    {curr(detailProduct.sellingPrice)}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60">
+                  <span className="text-[10px] font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider block">
+                    Coût d'achat
+                  </span>
+                  <div className="text-base font-black font-financial text-slate-800 dark:text-slate-200 mt-0.5">
+                    {curr(detailProduct.purchasePrice)}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60">
+                  <span className="text-[10px] font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider block">
+                    Marge brute
+                  </span>
+                  <div className="text-base font-black font-financial text-emerald-600 dark:text-emerald-400 mt-0.5">
+                    {curr(Math.max(0, detailProduct.sellingPrice - detailProduct.purchasePrice))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60">
+                  <span className="text-[10px] font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider block">
+                    Stock en rayon
+                  </span>
+                  <div className="text-base font-black font-mono text-[#14213D] dark:text-white mt-0.5">
+                    {detailProduct.stockQuantity} {detailProduct.unit || 'pièce(s)'}
+                  </div>
+                </div>
+              </div>
+
+              {detailProduct.description && (
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 text-slate-600 dark:text-slate-300">
+                  <div className="font-bold text-[10px] text-slate-400 uppercase tracking-wider mb-1">
+                    Description & Spécifications
+                  </div>
+                  <p>{detailProduct.description}</p>
+                </div>
+              )}
+
+              {/* Historique des mouvements de stock de cet article */}
+              <div className="space-y-2">
+                <div className="font-bold text-[11px] text-[#64748B] dark:text-slate-400 uppercase tracking-wider">
+                  Derniers mouvements de stock ({productMovements.length})
+                </div>
+                {productMovements.length === 0 ? (
+                  <div className="p-4 text-center rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 text-slate-400">
+                    Aucun mouvement enregistré pour cet article.
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-[#E8EDF2] dark:border-[#22304E] divide-y divide-[#E8EDF2] dark:divide-[#22304E] overflow-hidden">
+                    {productMovements.slice(0, 8).map((m) => (
+                      <div key={m.id} className="p-2.5 flex items-center justify-between bg-white dark:bg-[#131B2E]">
+                        <div>
+                          <div className="font-bold text-[#14213D] dark:text-white">
+                            {m.type === 'in' ? '+ Entrée' : m.type === 'out' ? '- Sortie' : 'Ajustement'} : {m.quantity} {detailProduct.unit}
+                          </div>
+                          <div className="text-[10px] text-[#64748B] dark:text-slate-400">
+                            {formatDate(m.createdAt)} {m.note ? `• ${m.note}` : ''}
+                          </div>
+                        </div>
+                        <span className="font-mono text-xs font-bold text-slate-500">
+                          Stock : {m.newStock}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 border-t border-[#E8EDF2] dark:border-[#22304E] bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetProductForStock(detailProduct);
+                    setStockModalType('in');
+                    setShowStockModal(true);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  <span>+ Entrée</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetProductForStock(detailProduct);
+                    setStockModalType('out');
+                    setShowStockModal(true);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowDownRight className="w-3.5 h-3.5" />
+                  <span>- Sortie</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRestockProductId(detailProduct.id);
+                    setShowRestockAddModal(true);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 text-xs font-bold flex items-center gap-1 border border-amber-200 dark:border-amber-800 cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Relance</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    openEditModal(detailProduct);
+                    setSelectedItemId(null);
+                  }}
+                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Modifier</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductToDelete(detailProduct);
+                  }}
+                  className="px-3 py-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-bold cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

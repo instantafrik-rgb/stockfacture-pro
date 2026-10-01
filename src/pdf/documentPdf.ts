@@ -5,7 +5,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Invoice, PaymentRecord, Quote, CompanySettings } from '../types';
-import { formatCurrency, formatDate, getPaymentMethodLabel } from '../utils/formatters';
+import { formatCurrency, formatDate, formatDateTime, getPaymentMethodLabel } from '../utils/formatters';
 
 // Format helper with settings
 const getCurr = (val: number, s: CompanySettings) => formatCurrency(val, s.currency, s.currencyPosition);
@@ -679,6 +679,224 @@ export async function generateQuotePdf(
           files: [file],
           title: `Devis ${quote.number}`,
           text: `Devis ${quote.number} pour ${quote.clientName} - Total: ${getCurr(quote.total, settings)}`,
+        });
+        return;
+      }
+    } catch (e) {
+      console.warn('Share cancelled or not supported', e);
+    }
+  }
+
+  doc.save(filename);
+}
+
+/**
+ * Generate and download, share, or print a professional thermal POS receipt (Ticket de caisse 58 mm ou 80 mm)
+ */
+export async function generateThermalReceiptPdf(
+  invoice: Invoice,
+  settings: CompanySettings,
+  payments: PaymentRecord[] = [],
+  format: '58mm' | '80mm' = '80mm',
+  action: 'download' | 'share' | 'print' = 'download'
+): Promise<void> {
+  const is58 = format === '58mm';
+  const pageWidth = is58 ? 58 : 80;
+  const margin = is58 ? 3.5 : 5;
+  const contentWidth = pageWidth - margin * 2;
+
+  // Calculate dynamic roll height
+  const baseHeight = 90;
+  const itemsHeight = invoice.items.length * (is58 ? 7.5 : 6.5);
+  const paymentsHeight = Math.max(1, payments.length) * 5;
+  const notesHeight = (invoice.notes ? 8 : 0) + (settings.invoiceFooterNote ? 12 : 0);
+  const totalHeight = Math.max(100, Math.ceil(baseHeight + itemsHeight + paymentsHeight + notesHeight));
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: [pageWidth, totalHeight],
+  });
+
+  const curr = (n: number) => formatCurrency(n, settings.currency, settings.currencyPosition);
+  let y = 6;
+
+  // 1. STORE HEADER (Centered)
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(is58 ? 9.5 : 12);
+  doc.setTextColor(0, 0, 0);
+  doc.text((settings.name || 'StockFacture Pro').toUpperCase(), pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 4 : 5;
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(is58 ? 7 : 8);
+
+  if (settings.address) {
+    const splitAddr = doc.splitTextToSize(settings.address, contentWidth);
+    doc.text(splitAddr, pageWidth / 2, y, { align: 'center' });
+    y += splitAddr.length * (is58 ? 3.2 : 3.8);
+  }
+
+  if (settings.phone) {
+    doc.text(`Tél : ${settings.phone}`, pageWidth / 2, y, { align: 'center' });
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  if (settings.taxId) {
+    doc.text(`NIF/RCCM : ${settings.taxId}`, pageWidth / 2, y, { align: 'center' });
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  // Dashed separator
+  const separator = '-'.repeat(is58 ? 31 : 44);
+  doc.text(separator, pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 3.5 : 4.5;
+
+  // 2. TICKET METADATA
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(is58 ? 7.5 : 8.5);
+  doc.text(`TICKET : ${invoice.number}`, margin, y);
+  y += is58 ? 3.5 : 4;
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(is58 ? 6.5 : 7.5);
+  const formattedDateTime = formatDateTime(invoice.date || invoice.createdAt);
+  doc.text(`Date : ${formattedDateTime}`, margin, y);
+  y += is58 ? 3.5 : 4;
+
+  if (invoice.clientName && invoice.clientName.trim() && invoice.clientName !== 'Client comptant') {
+    doc.text(`Client : ${invoice.clientName}`, margin, y);
+    y += is58 ? 3.5 : 4;
+    if (invoice.clientPhone) {
+      doc.text(`Tél : ${invoice.clientPhone}`, margin, y);
+      y += is58 ? 3.5 : 4;
+    }
+  }
+
+  // Dashed separator
+  doc.text(separator, pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 3.5 : 4.5;
+
+  // 3. ARTICLES HEADER
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(is58 ? 7 : 8);
+  doc.text('Article', margin, y);
+  doc.text('Qté x P.U', pageWidth - margin - (is58 ? 16 : 22), y, { align: 'right' });
+  doc.text('Total', pageWidth - margin, y, { align: 'right' });
+  y += is58 ? 3 : 3.5;
+  doc.setFont('courier', 'normal');
+  doc.text(separator, pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 3.5 : 4;
+
+  // 4. ITEMS LIST
+  invoice.items.forEach((item) => {
+    doc.setFont('courier', 'bold');
+    doc.setFontSize(is58 ? 6.8 : 7.8);
+    const designation = item.designation.slice(0, is58 ? 26 : 38);
+    doc.text(designation, margin, y);
+    y += is58 ? 3 : 3.5;
+
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(is58 ? 6.5 : 7.2);
+    const qtyPrice = `${item.quantity}${item.unit ? ` ${item.unit}` : ''} x ${formatCurrency(item.unitPrice, settings.currency, settings.currencyPosition)}`;
+    const lineTotal = formatCurrency(item.total, settings.currency, settings.currencyPosition);
+    doc.text(qtyPrice, margin + 2, y);
+    doc.text(lineTotal, pageWidth - margin, y, { align: 'right' });
+    y += is58 ? 3.8 : 4.2;
+  });
+
+  // Dashed separator
+  doc.text(separator, pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 3.5 : 4.5;
+
+  // 5. FINANCIAL TOTALS
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(is58 ? 7 : 8);
+
+  if (invoice.discountTotal > 0) {
+    doc.text('Sous-total brut :', margin, y);
+    doc.text(curr(invoice.subtotal), pageWidth - margin, y, { align: 'right' });
+    y += is58 ? 3.2 : 3.8;
+
+    doc.text('Remise déduite :', margin, y);
+    doc.text(`-${curr(invoice.discountTotal)}`, pageWidth - margin, y, { align: 'right' });
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  if (invoice.vatAmount > 0) {
+    doc.text(`TVA (${invoice.vatRate}%) :`, margin, y);
+    doc.text(curr(invoice.vatAmount), pageWidth - margin, y, { align: 'right' });
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  // TOTAL NET
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(is58 ? 9 : 10.5);
+  doc.text('TOTAL NET :', margin, y + 1);
+  doc.text(curr(invoice.total), pageWidth - margin, y + 1, { align: 'right' });
+  y += is58 ? 5.5 : 6.5;
+
+  // AMOUNT PAID & REMAINING
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(is58 ? 7.5 : 8.5);
+  doc.text('Montant Encaissé :', margin, y);
+  doc.text(curr(invoice.amountPaid), pageWidth - margin, y, { align: 'right' });
+  y += is58 ? 3.8 : 4.5;
+
+  if (invoice.remainingAmount > 0) {
+    doc.text('Reste à Payer :', margin, y);
+    doc.text(curr(invoice.remainingAmount), pageWidth - margin, y, { align: 'right' });
+    y += is58 ? 3.8 : 4.5;
+  }
+
+  // 6. PAYMENT MODES
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(is58 ? 6.5 : 7.5);
+  if (payments.length > 0) {
+    payments.forEach((p) => {
+      const modeLabel = getPaymentMethodLabel(p.method);
+      doc.text(`Mode : ${modeLabel}`, margin, y);
+      doc.text(curr(p.amount), pageWidth - margin, y, { align: 'right' });
+      y += is58 ? 3.2 : 3.8;
+    });
+  } else {
+    doc.text('Règlement comptant', margin, y);
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  // 7. FOOTER & NOTES
+  doc.text(separator, pageWidth / 2, y, { align: 'center' });
+  y += is58 ? 3.5 : 4.5;
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(is58 ? 6.5 : 7.2);
+  const footerNote = settings.invoiceFooterNote || 'Merci pour votre confiance ! À bientôt.';
+  const splitFooter = doc.splitTextToSize(footerNote, contentWidth);
+  doc.text(splitFooter, pageWidth / 2, y, { align: 'center' });
+  y += splitFooter.length * (is58 ? 3 : 3.5) + 3;
+
+  doc.setFontSize(is58 ? 6 : 6.8);
+  doc.text('*** StockFacture Pro ***', pageWidth / 2, y, { align: 'center' });
+
+  // Filename
+  const filename = `Ticket_${invoice.number}_${format}.pdf`;
+
+  if (action === 'print') {
+    doc.autoPrint();
+    const blobUrl = doc.output('bloburl');
+    window.open(blobUrl, '_blank');
+    return;
+  }
+
+  if (action === 'share' && navigator.share && navigator.canShare) {
+    try {
+      const blob = doc.output('blob');
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Ticket de caisse ${invoice.number}`,
+          text: `Ticket de caisse ${invoice.number} - Total: ${curr(invoice.total)}`,
         });
         return;
       }

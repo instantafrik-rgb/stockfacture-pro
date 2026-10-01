@@ -11,6 +11,7 @@
 
 import { Invoice, PaymentRecord, Product, PaymentMethod, CashRegisterClosure } from '../types';
 import { roundCurrency } from './calculations';
+import { toLocalDateString } from './formatters';
 
 export interface FinancialMetrics {
   totalBilled: number; // CA Facturé
@@ -206,9 +207,12 @@ export function calculateCashClosure(
   openingCash: number = 0,
   actualCashInDrawer: number = 0
 ): CashClosureCalculation {
-  // Payments recorded on this date
-  const dayPayments = payments.filter((p) => p.date === targetDate);
-  const dayInvoices = invoices.filter((i) => i.date === targetDate && i.status !== 'cancelled');
+  // Payments and invoices recorded on this date
+  const normTarget = toLocalDateString(targetDate);
+  const dayPayments = payments.filter((p) => toLocalDateString(p.date || p.createdAt) === normTarget);
+  const dayInvoices = invoices.filter(
+    (i) => toLocalDateString(i.date || i.createdAt) === normTarget && i.status !== 'cancelled'
+  );
 
   let cashSales = 0;
   let mobileMoneySales = 0;

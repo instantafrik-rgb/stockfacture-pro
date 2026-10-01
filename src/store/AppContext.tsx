@@ -17,8 +17,15 @@ import {
   CartItem,
   PaymentMethod,
   StockMovementReason,
+  RestockRequest,
+  RestockRequestStatus,
+  ReturnActionType,
+  ReturnItem,
+  ExchangeProduct,
+  SaleReturn,
 } from '../types';
 import { dataRepository, firestoreSyncService } from '../services/data';
+import { auth } from '../services/firebase';
 import { getDemoState, initialEmptyState } from '../data/demoData';
 import {
   calculateLineTotal,
@@ -30,7 +37,7 @@ import {
   roundCurrency,
   computeInvoiceSummary,
 } from '../utils/calculations';
-import { generateDocumentNumber, getTodayDateString } from '../utils/formatters';
+import { generateDocumentNumber, getTodayDateString, createPaymentDateString } from '../utils/formatters';
 
 export type ActiveView =
   | 'dashboard'
@@ -75,6 +82,7 @@ interface AppContextType {
     reason: StockMovementReason;
     note?: string;
     referenceId?: string;
+    userName?: string;
     date?: string;
   }) => Promise<{ success: boolean; error?: string }>;
 
@@ -119,6 +127,33 @@ interface AppContextType {
     date?: string;
   }) => Promise<{ success: boolean; payment?: PaymentRecord; error?: string }>;
 
+  // Global Debt Settlement (FIFO)
+  payClientReceivablesGlobally: (params: {
+    clientId?: string;
+    clientName: string;
+    amount: number;
+    method: PaymentMethod;
+    date?: string;
+    note?: string;
+  }) => Promise<{
+    success: boolean;
+    totalApplied: number;
+    affectedInvoices: { invoice: Invoice; amountApplied: number }[];
+    paymentRecords: PaymentRecord[];
+    error?: string;
+  }>;
+
+  // Clients à relancer (Restock Requests)
+  addRestockRequest: (
+    params: Omit<RestockRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>
+  ) => Promise<RestockRequest>;
+  updateRestockRequestStatus: (
+    id: string,
+    status: RestockRequestStatus,
+    note?: string
+  ) => Promise<void>;
+  deleteRestockRequest: (id: string) => Promise<void>;
+
   // Quotes
   createQuote: (params: {
     client: {
@@ -135,6 +170,34 @@ interface AppContextType {
   deleteQuote: (id: string) => Promise<void>;
   convertQuoteToInvoice: (quoteId: string) => Promise<{ success: boolean; invoice?: Invoice; error?: string }>;
 
+  // Retours / Avoirs / Échanges
+  processSaleReturn: (params: {
+    invoiceId: string;
+    items: {
+      invoiceItemId: string;
+      productId?: string;
+      designation: string;
+      quantity: number;
+      unitPrice: number;
+      total: number;
+      restock: boolean;
+      condition?: 'resellable' | 'defective';
+    }[];
+    actionType: ReturnActionType;
+    refundMethod?: PaymentMethod;
+    exchangeProduct?: {
+      productId: string;
+      designation: string;
+      quantity: number;
+      unitPrice: number;
+      total: number;
+    };
+    reason: string;
+    date?: string;
+    userName?: string;
+    notes?: string;
+  }) => Promise<{ success: boolean; saleReturn?: SaleReturn; error?: string }>;
+
   // PIN & Security
   unlockWithPin: (pin: string) => boolean;
   setAppPin: (pin: string) => Promise<void>;
@@ -145,6 +208,8 @@ interface AppContextType {
   loadDemoData: () => Promise<void>;
   clearDemoData: () => Promise<void>;
   resetAllData: () => Promise<void>;
+  resetStateOnLogout: () => Promise<void>;
+  reloadStateForUser: (userId: string | null) => Promise<void>;
   importBackup: (backupState: AppState) => Promise<boolean>;
 }
 
@@ -186,7 +251,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           // If PIN is enabled, lock upon startup
           const shouldLock = Boolean(loaded.settings?.pinEnabled && loaded.settings?.pinCode);
-          setState({ ...loaded, isLocked: shouldLock });
+          setState({
+            ...loaded,
+            restockRequests: Array.isArray(loaded.restockRequests) ? loaded.restockRequests : [],
+            returns: Array.isArray(loaded.returns) ? loaded.returns : [],
+            isLocked: shouldLock,
+          });
         } else {
           // Start with demo state for immediate exploration if first time
           const demo = getDemoState();
@@ -408,6 +478,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       reason,
       note,
       referenceId,
+      userName,
       date,
     }: {
       productId: string;
@@ -416,6 +487,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       reason: StockMovementReason;
       note?: string;
       referenceId?: string;
+      userName?: string;
       date?: string;
     }) => {
       const product = state.products.find((p) => p.id === productId);
@@ -445,6 +517,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? (date.includes('T') ? date : new Date(`${date}T12:00:00Z`).toISOString())
         : new Date().toISOString();
 
+      const user = auth.currentUser;
+      const movementUser = userName?.trim() || user?.displayName || user?.email || (state.settings.name ? state.settings.name : 'Responsable Stock');
+
       const movement: StockMovement = {
         id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         productId,
@@ -456,20 +531,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         reason,
         note,
         referenceId,
+        userName: movementUser,
         createdAt: movementDate,
       };
+
+      // Perform atomic Firestore transaction if connected to Google Cloud
+      if (user && typeof navigator !== 'undefined' && navigator.onLine) {
+        const transRes = await firestoreSyncService.commitStockMovementTransaction({
+          userId: user.uid,
+          movement,
+          type,
+          quantity,
+          allowNegativeStock: Boolean(state.settings.allowNegativeStock),
+        });
+
+        if (!transRes.success) {
+          return { success: false, error: transRes.error };
+        }
+        if (transRes.newStock !== undefined) {
+          newStock = transRes.newStock;
+          movement.newStock = newStock;
+        }
+      }
 
       const updatedProducts = state.products.map((p) =>
         p.id === productId ? { ...p, stockQuantity: newStock, updatedAt: new Date().toISOString() } : p
       );
 
+      // If stock replenished (type in), update pending restock requests for this product to 'available'
+      let updatedRestockRequests = state.restockRequests;
+      if (type === 'in' && newStock > 0 && state.restockRequests && state.restockRequests.length > 0) {
+        const pendingForProd = state.restockRequests.filter((r) => r.productId === productId && r.status === 'pending');
+        if (pendingForProd.length > 0) {
+          updatedRestockRequests = state.restockRequests.map((r) =>
+            r.productId === productId && r.status === 'pending'
+              ? { ...r, status: 'available' as const, contactedAt: undefined, updatedAt: new Date().toISOString() }
+              : r
+          );
+          // Sync updated restock requests
+          pendingForProd.forEach((r) => {
+            firestoreSyncService.syncRestockRequest({
+              ...r,
+              status: 'available',
+              updatedAt: new Date().toISOString(),
+            }).catch(() => {});
+          });
+        }
+      }
+
       await persistState({
         ...state,
         products: updatedProducts,
         movements: [movement, ...state.movements],
+        restockRequests: updatedRestockRequests,
       });
 
-      firestoreSyncService.syncStockMovement(movement).catch(() => {});
       return { success: true };
     },
     [state, persistState]
@@ -682,7 +798,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           invoiceId,
           invoiceNumber,
           amount: summary.amountPaid,
-          date: nowIso,
+          date: date ? createPaymentDateString(date) : nowIso,
           method: paymentMethod,
           note: summary.amountPaid < summary.total ? 'Acompte vente' : 'Règlement total vente',
           createdAt: nowIso,
@@ -728,6 +844,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
+      // If connected to Google Cloud, execute atomic Firestore transaction for stock & sale
+      const user = auth.currentUser;
+      if (user && typeof navigator !== 'undefined' && navigator.onLine && !isDraft) {
+        const transRes = await firestoreSyncService.commitSaleStockTransaction({
+          userId: user.uid,
+          invoice: newInvoice,
+          payment: newPayments.length > 0 ? newPayments[0] : undefined,
+          items: items.map((it) => ({
+            productId: it.productId,
+            designation: it.designation,
+            quantity: it.quantity,
+            isFreeLine: it.isFreeLine,
+          })),
+          movements: newMovements.slice(0, items.filter((it) => !it.isFreeLine && it.productId).length),
+          allowNegativeStock: Boolean(state.settings.allowNegativeStock),
+          nextInvoiceNumber: state.settings.nextInvoiceNumber + 1,
+        });
+
+        if (!transRes.success) {
+          return { success: false, error: transRes.error };
+        }
+
+        // Apply true cloud updated stocks to local state
+        if (transRes.updatedStocks) {
+          for (const [prodId, confirmedStock] of Object.entries(transRes.updatedStocks)) {
+            const idx = updatedProducts.findIndex((p) => p.id === prodId);
+            if (idx !== -1) {
+              updatedProducts[idx] = { ...updatedProducts[idx], stockQuantity: confirmedStock };
+            }
+          }
+        }
+      }
+
       // Save everything atomically
       await persistState({
         ...state,
@@ -742,8 +891,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clients: newClients,
       });
 
-      // Direct write guarantees
-      firestoreSyncService.syncInvoice(newInvoice).catch(() => {});
+      // Direct write guarantees for client
       if (client?.saveToDb && clientId) {
         const c = newClients.find((cl) => cl.id === clientId);
         if (c) firestoreSyncService.syncClient(c).catch(() => {});
@@ -866,6 +1014,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatedAt: nowIso,
       };
 
+      // Perform atomic Firestore transaction if connected to Google Cloud
+      const user = auth.currentUser;
+      if (user && typeof navigator !== 'undefined' && navigator.onLine) {
+        const transRes = await firestoreSyncService.commitSaleStockTransaction({
+          userId: user.uid,
+          invoice: updatedInvoice,
+          payment: newPayments.length > 0 ? newPayments[0] : undefined,
+          items: invoice.items.map((it) => ({
+            productId: it.productId,
+            designation: it.designation,
+            quantity: it.quantity,
+            isFreeLine: it.isFreeLine,
+          })),
+          movements: newMovements.slice(0, invoice.items.filter((it) => !it.isFreeLine && it.productId).length),
+          allowNegativeStock: Boolean(state.settings.allowNegativeStock),
+        });
+
+        if (!transRes.success) {
+          return { success: false, error: transRes.error };
+        }
+
+        if (transRes.updatedStocks) {
+          for (const [prodId, confirmedStock] of Object.entries(transRes.updatedStocks)) {
+            const idx = updatedProducts.findIndex((p) => p.id === prodId);
+            if (idx !== -1) {
+              updatedProducts[idx] = { ...updatedProducts[idx], stockQuantity: confirmedStock };
+            }
+          }
+        }
+      }
+
       const updatedInvoices = state.invoices.map((inv) =>
         inv.id === invoiceId ? updatedInvoice : inv
       );
@@ -929,6 +1108,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
+      // Perform atomic Firestore transaction if connected to Google Cloud
+      const user = auth.currentUser;
+      if (user && typeof navigator !== 'undefined' && navigator.onLine && invoice.status !== 'draft') {
+        const cancelRes = await firestoreSyncService.commitCancelInvoiceTransaction({
+          userId: user.uid,
+          invoiceId: id,
+          itemsToRestore: invoice.items
+            .filter((it) => !it.isFreeLine && it.productId)
+            .map((it) => ({ productId: it.productId!, quantity: it.quantity })),
+          movements: newMovements.slice(0, invoice.items.filter((it) => !it.isFreeLine && it.productId).length),
+        });
+
+        if (!cancelRes.success) {
+          return { success: false, error: cancelRes.error };
+        }
+      }
+
       const updatedInvoices = state.invoices.map((i) =>
         i.id === id ? { ...i, status: 'cancelled' as const, updatedAt: nowIso } : i
       );
@@ -939,9 +1135,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         products: updatedProducts,
         movements: newMovements,
       });
-
-      const cancelledInv = updatedInvoices.find((i) => i.id === id);
-      if (cancelledInv) firestoreSyncService.syncInvoice(cancelledInv).catch(() => {});
 
       return { success: true };
     },
@@ -972,7 +1165,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (safeAmount <= 0) return { success: false, error: 'Montant de paiement invalide' };
 
       const nowIso = new Date().toISOString();
-      const paymentDate = date ? new Date(date).toISOString() : nowIso;
+      const paymentDate = createPaymentDateString(date);
 
       const newPayment: PaymentRecord = {
         id: `pay-${Date.now()}`,
@@ -1012,6 +1205,187 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (paidInv) firestoreSyncService.syncInvoice(paidInv).catch(() => {});
 
       return { success: true, payment: newPayment };
+    },
+    [state, persistState]
+  );
+
+  // Global Settlement of Client Receivables (FIFO distribution across oldest invoices first)
+  const payClientReceivablesGlobally = useCallback(
+    async ({
+      clientId,
+      clientName,
+      amount,
+      method,
+      date,
+      note,
+    }: {
+      clientId?: string;
+      clientName: string;
+      amount: number;
+      method: PaymentMethod;
+      date?: string;
+      note?: string;
+    }) => {
+      const safeAmount = roundCurrency(Math.max(0, amount));
+      if (safeAmount <= 0) {
+        return {
+          success: false,
+          totalApplied: 0,
+          affectedInvoices: [],
+          paymentRecords: [],
+          error: 'Montant de règlement invalide.',
+        };
+      }
+
+      // Filter all unpaid or partial invoices belonging to this client (by ID or matching name)
+      const matchingInvoices = state.invoices.filter((inv) => {
+        if (inv.status === 'cancelled' || inv.remainingAmount <= 0) return false;
+        if (clientId && inv.clientId === clientId) return true;
+        return inv.clientName.trim().toLowerCase() === clientName.trim().toLowerCase();
+      });
+
+      if (matchingInvoices.length === 0) {
+        return {
+          success: false,
+          totalApplied: 0,
+          affectedInvoices: [],
+          paymentRecords: [],
+          error: 'Aucune facture impayée trouvée pour ce client.',
+        };
+      }
+
+      // Sort FIFO: oldest invoices first by date / creation
+      const sortedInvoices = [...matchingInvoices].sort((a, b) => {
+        const dateA = a.date || a.createdAt;
+        const dateB = b.date || b.createdAt;
+        return dateA.localeCompare(dateB);
+      });
+
+      let remainingToApply = safeAmount;
+      const affectedInvoices: { invoice: Invoice; amountApplied: number }[] = [];
+      const newPaymentRecords: PaymentRecord[] = [];
+      const updatedInvoicesMap = new Map<string, Invoice>();
+      const nowIso = new Date().toISOString();
+      const paymentDate = createPaymentDateString(date);
+
+      for (const inv of sortedInvoices) {
+        if (remainingToApply <= 0) break;
+
+        const portion = Math.min(remainingToApply, inv.remainingAmount);
+        const portionRounded = roundCurrency(portion);
+        if (portionRounded <= 0) continue;
+
+        remainingToApply = roundCurrency(remainingToApply - portionRounded);
+        const newAmountPaid = roundCurrency(inv.amountPaid + portionRounded);
+        const newRemaining = Math.max(0, roundCurrency(inv.total - newAmountPaid));
+        const newStatus = determineInvoiceStatus(inv.total, newAmountPaid);
+
+        const updatedInv: Invoice = {
+          ...inv,
+          amountPaid: newAmountPaid,
+          remainingAmount: newRemaining,
+          status: newStatus,
+          updatedAt: nowIso,
+        };
+        updatedInvoicesMap.set(inv.id, updatedInv);
+        affectedInvoices.push({ invoice: updatedInv, amountApplied: portionRounded });
+
+        const paymentRecord: PaymentRecord = {
+          id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          amount: portionRounded,
+          date: paymentDate,
+          method,
+          note: note?.trim() || `Règlement global créance (FIFO) - ${clientName}`,
+          createdAt: nowIso,
+        };
+        newPaymentRecords.push(paymentRecord);
+      }
+
+      const totalApplied = roundCurrency(safeAmount - remainingToApply);
+
+      const updatedAllInvoices = state.invoices.map((inv) =>
+        updatedInvoicesMap.has(inv.id) ? updatedInvoicesMap.get(inv.id)! : inv
+      );
+
+      await persistState({
+        ...state,
+        payments: [...newPaymentRecords, ...state.payments],
+        invoices: updatedAllInvoices,
+      });
+
+      // Synchronize in background
+      for (const p of newPaymentRecords) {
+        firestoreSyncService.syncPayment(p).catch(() => {});
+      }
+      for (const aff of affectedInvoices) {
+        firestoreSyncService.syncInvoice(aff.invoice).catch(() => {});
+      }
+
+      return {
+        success: true,
+        totalApplied,
+        affectedInvoices,
+        paymentRecords: newPaymentRecords,
+      };
+    },
+    [state, persistState]
+  );
+
+  // Clients à relancer (Restock Requests)
+  const addRestockRequest = useCallback(
+    async (params: Omit<RestockRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => {
+      const nowIso = new Date().toISOString();
+      const newRequest: RestockRequest = {
+        ...params,
+        id: `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        status: 'pending',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      const updated = [newRequest, ...(state.restockRequests || [])];
+      await persistState({ ...state, restockRequests: updated });
+      firestoreSyncService.syncRestockRequest(newRequest).catch(() => {});
+      return newRequest;
+    },
+    [state, persistState]
+  );
+
+  const updateRestockRequestStatus = useCallback(
+    async (id: string, status: RestockRequestStatus, note?: string) => {
+      const nowIso = new Date().toISOString();
+      let updatedReq: RestockRequest | undefined;
+      const updatedList: RestockRequest[] = (state.restockRequests || []).map((r) => {
+        if (r.id === id) {
+          const item: RestockRequest = {
+            ...r,
+            status,
+            note: note !== undefined ? note : r.note,
+            contactedAt: status === 'contacted' ? nowIso : r.contactedAt,
+            resolvedAt: status === 'available' || status === 'cancelled' ? nowIso : r.resolvedAt,
+            updatedAt: nowIso,
+          };
+          updatedReq = item;
+          return item;
+        }
+        return r;
+      });
+
+      await persistState({ ...state, restockRequests: updatedList });
+      if (updatedReq) {
+        firestoreSyncService.syncRestockRequest(updatedReq).catch(() => {});
+      }
+    },
+    [state, persistState]
+  );
+
+  const deleteRestockRequest = useCallback(
+    async (id: string) => {
+      const updatedList = (state.restockRequests || []).filter((r) => r.id !== id);
+      await persistState({ ...state, restockRequests: updatedList });
+      firestoreSyncService.deleteRestockRequest(id).catch(() => {});
     },
     [state, persistState]
   );
@@ -1202,6 +1576,273 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [state, createSale, persistState]
   );
 
+  // Retours / Avoirs / Échanges
+  const processSaleReturn = useCallback(
+    async ({
+      invoiceId,
+      items,
+      actionType,
+      refundMethod = 'cash',
+      exchangeProduct,
+      reason,
+      date,
+      userName,
+      notes,
+    }: {
+      invoiceId: string;
+      items: {
+        invoiceItemId: string;
+        productId?: string;
+        designation: string;
+        quantity: number;
+        unitPrice: number;
+        total: number;
+        restock: boolean;
+        condition?: 'resellable' | 'defective';
+      }[];
+      actionType: ReturnActionType;
+      refundMethod?: PaymentMethod;
+      exchangeProduct?: {
+        productId: string;
+        designation: string;
+        quantity: number;
+        unitPrice: number;
+        total: number;
+      };
+      reason: string;
+      date?: string;
+      userName?: string;
+      notes?: string;
+    }) => {
+      const invoice = state.invoices.find((inv) => inv.id === invoiceId);
+      if (!invoice) {
+        return { success: false, error: 'Facture introuvable.' };
+      }
+
+      if (!items || items.length === 0) {
+        return { success: false, error: 'Veuillez sélectionner au moins un article à retourner.' };
+      }
+
+      const totalReturnedAmount = roundCurrency(items.reduce((s, it) => s + (it.total || 0), 0));
+      if (totalReturnedAmount <= 0) {
+        return { success: false, error: 'Le montant total retourné doit être supérieur à zéro.' };
+      }
+
+      const nowIso = new Date().toISOString();
+      const returnDate = date || getTodayDateString();
+      const existingReturns = state.returns || [];
+      const currentYear = new Date().getFullYear();
+      const returnNumber = `RET-${currentYear}-${String(existingReturns.length + 1).padStart(4, '0')}`;
+
+      // Calculate exchange difference if applicable
+      let exchangePriceDiff: number | undefined = undefined;
+      if (actionType === 'exchange' && exchangeProduct) {
+        exchangePriceDiff = roundCurrency(exchangeProduct.total - totalReturnedAmount);
+      }
+
+      const newReturn: SaleReturn = {
+        id: `ret-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        returnNumber,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.number,
+        clientId: invoice.clientId,
+        clientName: invoice.clientName,
+        items,
+        actionType,
+        refundMethod: actionType === 'refund' ? refundMethod : undefined,
+        totalReturnedAmount,
+        exchangeProduct: actionType === 'exchange' ? exchangeProduct : undefined,
+        exchangePriceDifference: exchangePriceDiff,
+        reason: reason.trim() || 'Retour client',
+        date: returnDate,
+        userName: userName?.trim() || auth.currentUser?.displayName || auth.currentUser?.email || state.settings.name || 'Responsable',
+        notes: notes?.trim() || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      // 1. Stock movements
+      // For each returned item with restock: true, add stock movement 'in' with reason 'customer_return'
+      const newMovements: StockMovement[] = [];
+      const updatedProductsMap = new Map<string, Product>();
+
+      for (const it of items) {
+        if (it.restock && it.productId) {
+          const product = updatedProductsMap.get(it.productId) || state.products.find((p) => p.id === it.productId);
+          if (product) {
+            const prevStock = product.stockQuantity;
+            const newStock = prevStock + Math.max(0, it.quantity);
+            const updatedProd = { ...product, stockQuantity: newStock, updatedAt: nowIso };
+            updatedProductsMap.set(product.id, updatedProd);
+
+            newMovements.push({
+              id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+              productId: product.id,
+              productName: product.name,
+              type: 'in',
+              quantity: it.quantity,
+              previousStock: prevStock,
+              newStock,
+              reason: 'customer_return',
+              referenceId: returnNumber,
+              note: `Retour sur vente ${invoice.number} (${reason})`,
+              userName: newReturn.userName,
+              createdAt: nowIso,
+            });
+          }
+        }
+      }
+
+      // For exchange replacement product, decrement stock
+      if (actionType === 'exchange' && exchangeProduct && exchangeProduct.productId) {
+        const product = updatedProductsMap.get(exchangeProduct.productId) || state.products.find((p) => p.id === exchangeProduct.productId);
+        if (product) {
+          const prevStock = product.stockQuantity;
+          const newStock = prevStock - Math.max(0, exchangeProduct.quantity);
+          const updatedProd = { ...product, stockQuantity: newStock, updatedAt: nowIso };
+          updatedProductsMap.set(product.id, updatedProd);
+
+          newMovements.push({
+            id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+            productId: product.id,
+            productName: product.name,
+            type: 'out',
+            quantity: exchangeProduct.quantity,
+            previousStock: prevStock,
+            newStock,
+            reason: 'sale',
+            referenceId: returnNumber,
+            note: `Article délivré en échange contre ${returnNumber}`,
+            userName: newReturn.userName,
+            createdAt: nowIso,
+          });
+        }
+      }
+
+      // 2. Financial adjustments & Invoice update
+      // "Pour un remboursement ou un avoir, mettre correctement à jour les montants de la facture et les paiements.
+      // Ne jamais modifier ou supprimer l'historique original de la vente."
+      const newPayments: PaymentRecord[] = [];
+      let updatedInvoice: Invoice = { ...invoice };
+
+      if (actionType === 'refund') {
+        // Customer was paid back cash / mobile money
+        // Record refund payment record
+        const paymentRecord: PaymentRecord = {
+          id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.number,
+          amount: -totalReturnedAmount,
+          date: createPaymentDateString(returnDate),
+          method: refundMethod,
+          note: `Remboursement retour ${returnNumber} (${reason})`,
+          createdAt: nowIso,
+        };
+        newPayments.push(paymentRecord);
+
+        // Adjust amountPaid and remainingAmount
+        const newAmountPaid = Math.max(0, roundCurrency(invoice.amountPaid - totalReturnedAmount));
+        const netDue = Math.max(0, roundCurrency(invoice.total - totalReturnedAmount));
+        const newRemaining = Math.max(0, roundCurrency(netDue - newAmountPaid));
+        const newStatus = newRemaining === 0 ? 'paid' : newAmountPaid > 0 ? 'partial' : 'unpaid';
+
+        updatedInvoice = {
+          ...invoice,
+          amountPaid: newAmountPaid,
+          remainingAmount: newRemaining,
+          status: newStatus,
+          updatedAt: nowIso,
+        };
+      } else if (actionType === 'credit_note') {
+        // Avoir client : the credit note offsets remaining balance if any, or stands as client credit
+        const offset = Math.min(invoice.remainingAmount, totalReturnedAmount);
+        const newRemaining = Math.max(0, roundCurrency(invoice.remainingAmount - offset));
+        const newStatus = newRemaining === 0 ? 'paid' : invoice.amountPaid > 0 ? 'partial' : 'unpaid';
+
+        updatedInvoice = {
+          ...invoice,
+          remainingAmount: newRemaining,
+          status: newStatus,
+          notes: invoice.notes
+            ? `${invoice.notes}\n[Avoir client ${returnNumber} émis : ${totalReturnedAmount} ${state.settings.currency}]`
+            : `[Avoir client ${returnNumber} émis : ${totalReturnedAmount} ${state.settings.currency}]`,
+          updatedAt: nowIso,
+        };
+      } else if (actionType === 'exchange') {
+        // Exchange : handle difference
+        if (exchangePriceDiff && exchangePriceDiff > 0) {
+          // Client paid extra difference
+          const paymentRecord: PaymentRecord = {
+            id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            invoiceId: invoice.id,
+            invoiceNumber: invoice.number,
+            amount: exchangePriceDiff,
+            date: createPaymentDateString(returnDate),
+            method: refundMethod,
+            note: `Supplément payé échange ${returnNumber} (${exchangeProduct?.designation})`,
+            createdAt: nowIso,
+          };
+          newPayments.push(paymentRecord);
+        } else if (exchangePriceDiff && exchangePriceDiff < 0) {
+          // Shop refunded difference to client
+          const refundDiff = Math.abs(exchangePriceDiff);
+          const paymentRecord: PaymentRecord = {
+            id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            invoiceId: invoice.id,
+            invoiceNumber: invoice.number,
+            amount: -refundDiff,
+            date: createPaymentDateString(returnDate),
+            method: refundMethod,
+            note: `Remboursement différence échange ${returnNumber}`,
+            createdAt: nowIso,
+          };
+          newPayments.push(paymentRecord);
+        }
+
+        updatedInvoice = {
+          ...invoice,
+          updatedAt: nowIso,
+        };
+      }
+
+      // 3. Persist new state
+      const updatedProducts = state.products.map((p) =>
+        updatedProductsMap.has(p.id) ? updatedProductsMap.get(p.id)! : p
+      );
+
+      const updatedInvoices = state.invoices.map((inv) =>
+        inv.id === updatedInvoice.id ? updatedInvoice : inv
+      );
+
+      const updatedState: AppState = {
+        ...state,
+        products: updatedProducts,
+        movements: [...newMovements, ...state.movements],
+        invoices: updatedInvoices,
+        payments: [...newPayments, ...state.payments],
+        returns: [newReturn, ...(state.returns || [])],
+      };
+
+      await persistState(updatedState);
+
+      // 4. Background Firestore sync
+      firestoreSyncService.syncReturn(newReturn).catch(() => {});
+      firestoreSyncService.syncInvoice(updatedInvoice).catch(() => {});
+      for (const m of newMovements) {
+        firestoreSyncService.syncStockMovement(m).catch(() => {});
+      }
+      for (const p of updatedProductsMap.values()) {
+        firestoreSyncService.syncProduct(p).catch(() => {});
+      }
+      for (const pay of newPayments) {
+        firestoreSyncService.syncPayment(pay).catch(() => {});
+      }
+
+      return { success: true, saleReturn: newReturn };
+    },
+    [state, persistState]
+  );
+
   // PIN & Security
   const unlockWithPin = useCallback(
     (pin: string) => {
@@ -1274,15 +1915,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setState(initialEmptyState);
   }, []);
 
+  const resetStateOnLogout = useCallback(async () => {
+    stateRef.current = initialEmptyState;
+    setState(initialEmptyState);
+    dataRepository.setUserScope(null);
+  }, []);
+
+  const reloadStateForUser = useCallback(async (userId: string | null) => {
+    setIsLoading(true);
+    try {
+      dataRepository.setUserScope(userId);
+      const cached = await dataRepository.loadFullState();
+      if (cached && (cached.products?.length || cached.invoices?.length || cached.settings?.name)) {
+        const normalizedCached: AppState = {
+          ...cached,
+          restockRequests: Array.isArray(cached.restockRequests) ? cached.restockRequests : [],
+          returns: Array.isArray(cached.returns) ? cached.returns : [],
+        };
+        stateRef.current = normalizedCached;
+        setState(normalizedCached);
+      } else {
+        stateRef.current = initialEmptyState;
+        setState(initialEmptyState);
+      }
+    } catch (e) {
+      console.error('Failed to reload state for user:', e);
+      stateRef.current = initialEmptyState;
+      setState(initialEmptyState);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const importBackup = useCallback(
     async (backupState: AppState) => {
       if (!backupState || !backupState.settings || !Array.isArray(backupState.products)) {
         return false;
       }
-      await persistState(backupState);
+      stateRef.current = backupState;
+      setState(backupState);
+      await dataRepository.saveFullState(backupState);
+      // Synchronize full restored state to Firestore Cloud
+      await firestoreSyncService.syncFullRestoredState(backupState);
       return true;
     },
-    [persistState]
+    []
   );
 
   const contextValue = useMemo(
@@ -1310,10 +1987,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelInvoice,
       validateDraftInvoice,
       addPaymentToInvoice,
+      payClientReceivablesGlobally,
+      addRestockRequest,
+      updateRestockRequestStatus,
+      deleteRestockRequest,
       createQuote,
       updateQuote,
       deleteQuote,
       convertQuoteToInvoice,
+      processSaleReturn,
       unlockWithPin,
       setAppPin,
       removeAppPin,
@@ -1321,6 +2003,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       loadDemoData,
       clearDemoData,
       resetAllData,
+      resetStateOnLogout,
+      reloadStateForUser,
       importBackup,
     }),
     [
@@ -1345,10 +2029,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelInvoice,
       validateDraftInvoice,
       addPaymentToInvoice,
+      payClientReceivablesGlobally,
+      addRestockRequest,
+      updateRestockRequestStatus,
+      deleteRestockRequest,
       createQuote,
       updateQuote,
       deleteQuote,
       convertQuoteToInvoice,
+      processSaleReturn,
       unlockWithPin,
       setAppPin,
       removeAppPin,
@@ -1356,6 +2045,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       loadDemoData,
       clearDemoData,
       resetAllData,
+      resetStateOnLogout,
+      reloadStateForUser,
       importBackup,
     ]
   );

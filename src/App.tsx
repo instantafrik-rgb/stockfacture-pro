@@ -20,11 +20,21 @@ import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ManualInvoicePage } from './pages/ManualInvoicePage';
 import { Sparkles, ArrowRight, Building2, CheckCircle2 } from 'lucide-react';
+import { notificationService } from './services/notificationService';
 
 const MainView: React.FC = () => {
-  const { activeView, isLoading, state, updateSettings } = useApp();
+  const { activeView, isLoading, state, updateSettings, navigate } = useApp();
   const [onboardingName, setOnboardingName] = useState(state.settings.name);
   const [onboardingCurrency, setOnboardingCurrency] = useState(state.settings.currency);
+
+  // Initialize background notification scheduler with state access and reports navigation
+  React.useEffect(() => {
+    notificationService.initialize(
+      () => state,
+      () => navigate('reports')
+    );
+    return () => notificationService.cleanup();
+  }, [state, navigate]);
 
   if (isLoading) {
     return (

@@ -15,13 +15,15 @@ import {
   AlertTriangle,
   ArrowRight,
   Layers,
+  Receipt,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { Invoice } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { PaymentModal } from '../components/modals/PaymentModal';
-import { Phase4TestModal } from '../components/modals/Phase4TestModal';
+import { GlobalClientPaymentModal } from '../components/modals/GlobalClientPaymentModal';
+import { ThermalReceiptModal } from '../components/modals/ThermalReceiptModal';
 import {
   calculateAgingBalance,
   groupReceivablesByClient,
@@ -39,8 +41,10 @@ export const ReceivablesPage: React.FC = () => {
   const [filterOverdueOnly, setFilterOverdueOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<Invoice | null>(null);
-  const [showTestModal, setShowTestModal] = useState(false);
   const [copiedInvoiceId, setCopiedInvoiceId] = useState<string | null>(null);
+  const [globalPaymentClient, setGlobalPaymentClient] = useState<{ clientId?: string; clientName: string } | null>(null);
+  const [showGlobalPaymentModal, setShowGlobalPaymentModal] = useState(false);
+  const [thermalInvoice, setThermalInvoice] = useState<Invoice | null>(null);
 
   // All unpaid or partial invoices that are not cancelled
   const receivableInvoices = useMemo(() => {
@@ -123,6 +127,18 @@ export const ReceivablesPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              setGlobalPaymentClient(null);
+              setShowGlobalPaymentModal(true);
+            }}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-amber-600/20 transition-transform active:scale-95 min-h-[44px] cursor-pointer"
+          >
+            <Layers className="w-4 h-4" />
+            <span>Régler une créance (Global)</span>
+          </button>
+
           <button
             type="button"
             onClick={() => navigate('invoices')}
@@ -382,6 +398,15 @@ export const ReceivablesPage: React.FC = () => {
 
                         <button
                           type="button"
+                          onClick={() => setThermalInvoice(inv)}
+                          title="Imprimer le ticket de caisse thermique"
+                          className="p-2.5 rounded-xl border border-orange-200 dark:border-orange-800 text-orange-600 dark:text-orange-400 bg-orange-50/50 dark:bg-orange-950/40 hover:bg-orange-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+                        >
+                          <Receipt className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => setSelectedInvoiceForPayment(inv)}
                           className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm shadow-xs transition-transform active:scale-95 min-h-[44px]"
                         >
@@ -465,10 +490,25 @@ export const ReceivablesPage: React.FC = () => {
                         setSearchQuery(client.clientName);
                         setActiveTab('invoices');
                       }}
-                      className="px-3.5 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold hover:bg-indigo-100 transition-colors flex items-center gap-1.5"
+                      className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 transition-colors flex items-center gap-1.5"
                     >
-                      <span>Voir les factures</span>
+                      <span>Factures</span>
                       <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGlobalPaymentClient({
+                          clientId: client.clientId,
+                          clientName: client.clientName,
+                        });
+                        setShowGlobalPaymentModal(true);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold transition-all active:scale-95 shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Régler la créance</span>
                     </button>
                   </div>
                 </div>
@@ -487,11 +527,27 @@ export const ReceivablesPage: React.FC = () => {
         />
       )}
 
-      {/* Phase 4 Test Modal */}
-      <Phase4TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
-      />
+      {/* Global Client Debt Settlement Modal (FIFO) */}
+      {showGlobalPaymentModal && (
+        <GlobalClientPaymentModal
+          isOpen={showGlobalPaymentModal}
+          onClose={() => {
+            setShowGlobalPaymentModal(false);
+            setGlobalPaymentClient(null);
+          }}
+          defaultClientId={globalPaymentClient?.clientId}
+          defaultClientName={globalPaymentClient?.clientName}
+        />
+      )}
+
+      {/* Thermal POS Receipt Modal */}
+      {thermalInvoice && (
+        <ThermalReceiptModal
+          isOpen={Boolean(thermalInvoice)}
+          onClose={() => setThermalInvoice(null)}
+          invoice={thermalInvoice}
+        />
+      )}
     </div>
   );
 };

@@ -27,7 +27,7 @@ import { calculateStockValue } from '../utils/calculations';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { StockMovementModal } from '../components/modals/StockMovementModal';
 
-type MovementFilterKey = 'all' | 'in' | 'sale' | 'donation' | 'defective' | 'loss' | 'adjustment';
+type MovementFilterKey = 'all' | 'in' | 'sale' | 'donation' | 'defective' | 'loss' | 'adjustment' | 'return';
 type PeriodFilterKey = 'all' | 'today' | 'week' | 'month' | 'custom';
 
 export const StockPage: React.FC = () => {
@@ -94,6 +94,9 @@ export const StockPage: React.FC = () => {
       ) {
         return false;
       }
+      if (movementFilter === 'return' && m.reason !== 'customer_return') {
+        return false;
+      }
 
       // 4. Period Filter
       if (periodFilter === 'today') {
@@ -146,6 +149,7 @@ export const StockPage: React.FC = () => {
       adjustment: state.movements.filter(
         (m) => m.type === 'adjustment' || m.reason === 'correction'
       ).length,
+      return: state.movements.filter((m) => m.reason === 'customer_return').length,
     };
   }, [state.movements]);
 
@@ -575,10 +579,17 @@ export const StockPage: React.FC = () => {
                 let IconComponent = Sliders;
 
                 if (isIn) {
-                  badgeColor =
-                    'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200/70 dark:border-emerald-800/40';
-                  IconComponent = ArrowDownRight;
-                  reasonText = 'Entrée';
+                  if (m.reason === 'customer_return') {
+                    badgeColor =
+                      'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 border-indigo-200/70 dark:border-indigo-800/40';
+                    IconComponent = RotateCcw;
+                    reasonText = 'Retour';
+                  } else {
+                    badgeColor =
+                      'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200/70 dark:border-emerald-800/40';
+                    IconComponent = ArrowDownRight;
+                    reasonText = 'Entrée';
+                  }
                 } else if (isOut) {
                   if (m.reason === 'sale') {
                     badgeColor =

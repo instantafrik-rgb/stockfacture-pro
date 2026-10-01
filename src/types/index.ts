@@ -8,6 +8,8 @@ export type InvoiceStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'cancelled
 
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted';
 
+export type RestockRequestStatus = 'pending' | 'contacted' | 'available' | 'cancelled';
+
 export type StockMovementType = 'in' | 'out' | 'adjustment';
 
 export type StockMovementReason =
@@ -52,6 +54,54 @@ export interface CompanySettings {
   pinEnabled: boolean;
   pinCode?: string; // 4 to 6 digit hashed or plain PIN
   theme: 'light' | 'dark' | 'system';
+  // Backup & Notifications settings
+  backupReminderEnabled?: boolean; // default: true
+  backupReminderTime?: string; // default: "20:00"
+  dailyReportEnabled?: boolean; // default: true
+  dailyReportTime?: string; // default: "20:00"
+  lastBackupDate?: string; // ISO string of last completed backup
+  lastBackupType?: 'cloud' | 'json' | 'local';
+}
+
+export interface BackupMetadata {
+  id: string;
+  createdAt: string;
+  appVersion: string;
+  userEmail?: string;
+  userId?: string;
+  stats: {
+    productsCount: number;
+    categoriesCount: number;
+    clientsCount: number;
+    invoicesCount: number;
+    quotesCount: number;
+    paymentsCount: number;
+    movementsCount: number;
+    closuresCount: number;
+    restockRequestsCount?: number;
+    returnsCount?: number;
+    totalRevenue: number;
+  };
+}
+
+export interface FullBackupPayload {
+  format: 'STOCKFACTURE_PRO_BACKUP';
+  version: '1.0';
+  app: 'StockFacture Pro';
+  metadata: BackupMetadata;
+  data: {
+    settings: CompanySettings;
+    categories: Category[];
+    products: Product[];
+    movements: StockMovement[];
+    clients: Client[];
+    invoices: Invoice[];
+    payments: PaymentRecord[];
+    quotes: Quote[];
+    closures?: CashRegisterClosure[];
+    restockRequests?: RestockRequest[];
+    returns?: SaleReturn[];
+  };
 }
 
 export interface Category {
@@ -88,6 +138,7 @@ export interface StockMovement {
   reason: StockMovementReason;
   referenceId?: string; // invoiceId or manual note
   note?: string;
+  userName?: string; // Utilisateur / caissier ayant enregistré l'opération
   createdAt: string;
 }
 
@@ -204,6 +255,7 @@ export interface CartItem {
   purchasePrice?: number;
   discountPercent: number;
   availableStock?: number;
+  imageUrl?: string;
 }
 
 export interface CashRegisterClosure {
@@ -225,6 +277,65 @@ export interface CashRegisterClosure {
   notes?: string;
 }
 
+export interface RestockRequest {
+  id: string;
+  clientId?: string;
+  clientName: string;
+  clientPhone?: string;
+  productId: string;
+  productName: string;
+  desiredQuantity: number;
+  requestDate: string; // YYYY-MM-DD
+  note?: string;
+  status: RestockRequestStatus; // 'pending' | 'contacted' | 'available' | 'cancelled'
+  contactedAt?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReturnActionType = 'refund' | 'credit_note' | 'exchange';
+
+export interface ReturnItem {
+  invoiceItemId: string;
+  productId?: string;
+  designation: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  restock: boolean; // Remettre en stock physique (si revendable)
+  condition?: 'resellable' | 'defective';
+}
+
+export interface ExchangeProduct {
+  productId: string;
+  designation: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+export interface SaleReturn {
+  id: string;
+  returnNumber: string; // e.g. "RET-2026-0001"
+  invoiceId: string;
+  invoiceNumber: string;
+  clientId?: string;
+  clientName: string;
+  items: ReturnItem[];
+  actionType: ReturnActionType; // 'refund' | 'credit_note' | 'exchange'
+  refundMethod?: PaymentMethod;
+  totalReturnedAmount: number;
+  exchangeProduct?: ExchangeProduct;
+  exchangePriceDifference?: number; // >0 client pays extra, <0 shop refunds difference, 0 equal
+  reason: string; // "Article défectueux", "Erreur taille/ref", "Ne convient pas", etc.
+  date: string; // YYYY-MM-DD
+  userName?: string;
+  notes?: string;
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
+}
+
 export interface AppState {
   settings: CompanySettings;
   categories: Category[];
@@ -235,6 +346,8 @@ export interface AppState {
   payments: PaymentRecord[];
   quotes: Quote[];
   closures?: CashRegisterClosure[];
+  restockRequests?: RestockRequest[];
+  returns?: SaleReturn[];
   isLocked: boolean; // PIN lock
   hasCompletedOnboarding: boolean;
 }

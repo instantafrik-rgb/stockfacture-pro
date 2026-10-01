@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowDownRight, ArrowUpRight, Sliders, AlertCircle, Info, Calendar } from 'lucide-react';
+import { X, ArrowDownRight, ArrowUpRight, Sliders, AlertCircle, Info, Calendar, User, BellRing } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import { StockMovementReason, StockMovementType } from '../../types';
 import { getTodayDateString } from '../../utils/formatters';
+import { auth } from '../../services/firebase';
+import { RestockRequestsDrawer } from './RestockRequestsDrawer';
 
 interface StockMovementModalProps {
   isOpen: boolean;
@@ -26,6 +28,8 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
   const [date, setDate] = useState<string>(getTodayDateString());
   const [note, setNote] = useState<string>('');
   const [referenceId, setReferenceId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
+  const [showRestockDrawer, setShowRestockDrawer] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -43,7 +47,15 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
     }
     setDate(getTodayDateString());
     setErrorMsg(null);
-  }, [defaultProductId, defaultType, isOpen]);
+    // Initialize operator user name
+    const currentUser = auth.currentUser;
+    const defaultUser =
+      currentUser?.displayName ||
+      currentUser?.email ||
+      state.settings.name ||
+      'Responsable Stock';
+    setUserName(defaultUser);
+  }, [defaultProductId, defaultType, isOpen, state.settings.name]);
 
   // Set default product if none selected
   useEffect(() => {
@@ -97,16 +109,25 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
       reason,
       note: note.trim() || undefined,
       referenceId: referenceId.trim() || undefined,
+      userName: userName.trim() || undefined,
       date,
     });
     setIsSubmitting(false);
 
     if (result.success) {
-      onClose();
+      if (type === 'in' && waitingClients.length > 0) {
+        setShowRestockDrawer(true);
+      } else {
+        onClose();
+      }
     } else {
       setErrorMsg(result.error || 'Erreur lors de l’enregistrement du mouvement.');
     }
   };
+
+  const waitingClients = (state.restockRequests || []).filter(
+    (r) => r.productId === productId && (r.status === 'pending' || r.status === 'available')
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
@@ -222,6 +243,24 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
                 </option>
               ))}
             </select>
+
+            {type === 'in' && waitingClients.length > 0 && (
+              <div className="mt-2.5 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                  <BellRing className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    <strong>{waitingClients.length} client(s)</strong> attendent ce produit en réassort !
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowRestockDrawer(true)}
+                  className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] shrink-0 cursor-pointer shadow-xs"
+                >
+                  Voir clients
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Motif du mouvement : pour sortie, UNIQUEMENT Vente, Don, Article défectueux, Perte */}
@@ -360,6 +399,22 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
             </div>
           </div>
 
+          {/* Opérateur / Utilisateur responsable */}
+          <div>
+            <label className="block text-xs font-bold text-[#14213D] dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-slate-400" />
+              <span>Opérateur / Utilisateur responsable *</span>
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: Responsable Stock, Caissier..."
+              value={userName}
+              onChange={(e) => setUserName(e.target.value)}
+              className="w-full h-11 px-3.5 rounded-xl border border-[#E8EDF2] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-[#14213D] dark:text-white focus:ring-2 focus:ring-orange-500"
+              required
+            />
+          </div>
+
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E8EDF2] dark:border-[#22304E]">
             <button
@@ -391,6 +446,18 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Restock Requests Drawer */}
+      {showRestockDrawer && (
+        <RestockRequestsDrawer
+          isOpen={showRestockDrawer}
+          onClose={() => {
+            setShowRestockDrawer(false);
+            onClose();
+          }}
+          defaultProductId={productId}
+        />
+      )}
     </div>
   );
 };

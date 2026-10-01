@@ -7,14 +7,34 @@ import { AppState } from '../types';
 const DB_NAME = 'StockFactureProDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'app_state';
-const STATE_KEY = 'current_state';
-const LOCAL_STORAGE_KEY = 'stockfacture_pro_data';
+const DEFAULT_STATE_KEY = 'state_guest';
+const DEFAULT_LOCAL_STORAGE_KEY = 'stockfacture_data_guest';
 
 class StorageService {
   private dbPromise: Promise<IDBDatabase | null> | null = null;
+  private currentUserId: string | null = null;
 
   constructor() {
     this.initIndexedDB();
+  }
+
+  /**
+   * Set user scope for isolation between Google accounts
+   */
+  setUserScope(userId: string | null): void {
+    this.currentUserId = userId || null;
+  }
+
+  getUserScope(): string | null {
+    return this.currentUserId;
+  }
+
+  private getStateKey(): string {
+    return this.currentUserId ? `state_${this.currentUserId}` : DEFAULT_STATE_KEY;
+  }
+
+  private getLocalStorageKey(): string {
+    return this.currentUserId ? `stockfacture_data_${this.currentUserId}` : DEFAULT_LOCAL_STORAGE_KEY;
   }
 
   private initIndexedDB(): Promise<IDBDatabase | null> {
@@ -57,13 +77,15 @@ class StorageService {
    * Save the full application state
    */
   async saveState(state: AppState): Promise<boolean> {
+    const stateKey = this.getStateKey();
+    const lsKey = this.getLocalStorageKey();
     try {
       const db = await this.initIndexedDB();
       if (db) {
         await new Promise<void>((resolve, reject) => {
           const transaction = db.transaction(STORE_NAME, 'readwrite');
           const store = transaction.objectStore(STORE_NAME);
-          const request = store.put(state, STATE_KEY);
+          const request = store.put(state, stateKey);
           request.onsuccess = () => resolve();
           request.onerror = (e) => reject(e);
         });
@@ -71,7 +93,7 @@ class StorageService {
 
       // Mirror to localStorage as immediate synchronous fallback
       try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+        localStorage.setItem(lsKey, JSON.stringify(state));
       } catch (e) {
         console.warn('LocalStorage mirror warning:', e);
       }
@@ -80,7 +102,7 @@ class StorageService {
     } catch (err) {
       console.error('Failed to save state in IndexedDB:', err);
       try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+        localStorage.setItem(lsKey, JSON.stringify(state));
         return true;
       } catch (lsErr) {
         console.error('LocalStorage save error:', lsErr);
@@ -93,6 +115,8 @@ class StorageService {
    * Load the state from storage
    */
   async loadState(): Promise<AppState | null> {
+    const stateKey = this.getStateKey();
+    const lsKey = this.getLocalStorageKey();
     try {
       const db = await this.initIndexedDB();
       if (db) {
@@ -100,7 +124,7 @@ class StorageService {
           try {
             const transaction = db.transaction(STORE_NAME, 'readonly');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(STATE_KEY);
+            const request = store.get(stateKey);
             request.onsuccess = () => resolve(request.result || null);
             request.onerror = () => resolve(null);
           } catch {
@@ -114,15 +138,16 @@ class StorageService {
       }
 
       // Check localStorage
-      const lsData = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const lsData = localStorage.getItem(lsKey);
       if (lsData) {
         return JSON.parse(lsData);
       }
+
       return null;
     } catch (err) {
       console.error('Error loading state:', err);
       try {
-        const lsData = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const lsData = localStorage.getItem(lsKey);
         if (lsData) return JSON.parse(lsData);
       } catch {}
       return null;
@@ -147,6 +172,32 @@ class StorageService {
   }
 
   /**
+   * Clear local storage cache for a specific account or the current account.
+   * Does NOT touch Firestore cloud data.
+   */
+  async clearAccountCache(targetUserId?: string | null): Promise<void> {
+    const uid = targetUserId !== undefined ? targetUserId : this.currentUserId;
+    const stateKey = uid ? `state_${uid}` : DEFAULT_STATE_KEY;
+    const lsKey = uid ? `stockfacture_data_${uid}` : DEFAULT_LOCAL_STORAGE_KEY;
+
+    try {
+      const db = await this.initIndexedDB();
+      if (db) {
+        await new Promise<void>((resolve) => {
+          const transaction = db.transaction(STORE_NAME, 'readwrite');
+          const store = transaction.objectStore(STORE_NAME);
+          store.delete(stateKey).onsuccess = () => resolve();
+        });
+      }
+    } catch (e) {
+      console.warn('IndexedDB clearAccountCache error', e);
+    }
+    try {
+      localStorage.removeItem(lsKey);
+    } catch {}
+  }
+
+  /**
    * Clear all local storage data
    */
   async clearAll(): Promise<void> {
@@ -162,7 +213,12 @@ class StorageService {
     } catch (e) {
       console.warn('IndexedDB clear error', e);
     }
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    try {
+      localStorage.removeItem(DEFAULT_LOCAL_STORAGE_KEY);
+      if (this.currentUserId) {
+        localStorage.removeItem(this.getLocalStorageKey());
+      }
+    } catch {}
   }
 }
 

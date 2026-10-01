@@ -21,10 +21,12 @@ import {
   X,
   AlertCircle,
   ShieldCheck,
+  Printer,
+  RotateCcw,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
-import { CartItem, PaymentMethod, Product } from '../types';
-import { formatCurrency, getTodayDateString } from '../utils/formatters';
+import { CartItem, Invoice, PaymentMethod, Product } from '../types';
+import { formatCurrency, formatDate, getTodayDateString } from '../utils/formatters';
 import {
   calculateLineTotal,
   calculateSubtotal,
@@ -34,7 +36,9 @@ import {
 } from '../utils/calculations';
 import { FreeLineModal } from '../components/modals/FreeLineModal';
 import { BarcodeScannerModal } from '../components/modals/BarcodeScannerModal';
-import { Phase2TestModal } from '../components/modals/Phase2TestModal';
+import { ThermalReceiptModal } from '../components/modals/ThermalReceiptModal';
+import { SaleReturnModal } from '../components/modals/SaleReturnModal';
+import { ProductThumbnail } from '../components/common/ProductThumbnail';
 import { pickContactNative, isContactPickerSupported } from '../services/contactPicker';
 import { generateInvoicePdf } from '../pdf/documentPdf';
 
@@ -50,7 +54,10 @@ export const SalePage: React.FC = () => {
   // Modals
   const [showFreeLineModal, setShowFreeLineModal] = useState(false);
   const [showScannerModal, setShowScannerModal] = useState(false);
-  const [showTestModal, setShowTestModal] = useState(false);
+  const [showThermalModal, setShowThermalModal] = useState(false);
+  const [returnInvoice, setReturnInvoice] = useState<Invoice | null>(null);
+  const [showSelectInvoiceForReturnModal, setShowSelectInvoiceForReturnModal] = useState<boolean>(false);
+  const [returnSearchQuery, setReturnSearchQuery] = useState<string>('');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
@@ -154,6 +161,7 @@ export const SalePage: React.FC = () => {
           purchasePrice: product.purchasePrice,
           discountPercent: 0,
           availableStock: product.stockQuantity,
+          imageUrl: product.imageUrl,
         };
         return [...prev, newItem];
       }
@@ -363,6 +371,26 @@ export const SalePage: React.FC = () => {
               <span>Nouvelle vente</span>
             </button>
 
+            {/* Action Ticket de Caisse Thermique (58 mm / 80 mm) */}
+            <button
+              type="button"
+              onClick={() => setShowThermalModal(true)}
+              className="w-full py-3.5 px-4 rounded-2xl bg-[#14213D] hover:bg-[#26354F] text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-md cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-orange-400" />
+              <span>Imprimer Ticket de Caisse (58 / 80 mm)</span>
+            </button>
+
+            {/* Action Retour / Échange */}
+            <button
+              type="button"
+              onClick={() => setReturnInvoice(completedInvoice)}
+              className="w-full py-3 px-4 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all active:scale-95 border border-indigo-200/80 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4 text-indigo-600" />
+              <span>Retour / Échange sur cette vente</span>
+            </button>
+
             {/* Secondary Actions : Voir la facture (PDF) & Partager */}
             <div className="grid grid-cols-2 gap-2.5">
               <button
@@ -395,6 +423,22 @@ export const SalePage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Thermal Receipt Modal */}
+        <ThermalReceiptModal
+          isOpen={showThermalModal}
+          onClose={() => setShowThermalModal(false)}
+          invoice={completedInvoice}
+        />
+
+        {/* Sale Return Modal on Completed Sale */}
+        {returnInvoice && (
+          <SaleReturnModal
+            isOpen={Boolean(returnInvoice)}
+            onClose={() => setReturnInvoice(null)}
+            invoice={returnInvoice}
+          />
+        )}
       </div>
     );
   }
@@ -413,6 +457,18 @@ export const SalePage: React.FC = () => {
         </button>
 
         <div className="flex items-center gap-2">
+          {/* Retour / Avoir button */}
+          <button
+            type="button"
+            onClick={() => setShowSelectInvoiceForReturnModal(true)}
+            className="flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/80 text-xs font-bold transition-all active:scale-95 whitespace-nowrap shadow-xs cursor-pointer"
+            title="Enregistrer un retour d'articles, avoir client ou échange"
+          >
+            <RotateCcw className="w-4 h-4 text-indigo-600" />
+            <span className="hidden sm:inline">Retour / Avoir</span>
+            <span className="sm:hidden">Retour</span>
+          </button>
+
           {/* Barcode scanner button */}
           <button
             type="button"
@@ -529,16 +585,16 @@ export const SalePage: React.FC = () => {
                 }`}
               >
                 {/* Photo / Thumbnail */}
-                <div className="relative w-16 h-16 rounded-2xl bg-[#EEF4FF] dark:bg-slate-800 border border-[#DDE7FF] dark:border-slate-700 overflow-hidden flex items-center justify-center shrink-0">
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="font-black text-lg text-[#2563EB] dark:text-blue-400 uppercase">
-                      {p.name.slice(0, 2)}
-                    </span>
-                  )}
+                <div className="relative shrink-0">
+                  <ProductThumbnail
+                    imageUrl={p.imageUrl}
+                    name={p.name}
+                    categoryColor={state.categories.find((c) => c.id === p.categoryId)?.color}
+                    size="lg"
+                    roundedClassName="rounded-2xl"
+                  />
                   {inCart && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-orange-500 text-white text-xs font-mono font-bold flex items-center justify-center shadow-md">
+                    <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-orange-500 text-white text-xs font-mono font-bold flex items-center justify-center shadow-md ring-2 ring-white dark:ring-[#131B2E]">
                       {inCart.quantity}
                     </span>
                   )}
@@ -678,20 +734,28 @@ export const SalePage: React.FC = () => {
                   key={item.id}
                   className="p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60 space-y-2.5"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-xs sm:text-sm font-extrabold text-[#14213D] dark:text-white leading-tight">
-                        {item.designation}
+                  <div className="flex items-start justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ProductThumbnail
+                        imageUrl={item.imageUrl}
+                        name={item.designation}
+                        size="sm"
+                        roundedClassName="rounded-xl"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs sm:text-sm font-extrabold text-[#14213D] dark:text-white leading-tight truncate">
+                          {item.designation}
+                        </div>
+                        {item.isFreeLine ? (
+                          <span className="text-[10px] text-purple-700 dark:text-purple-300 font-bold bg-[#F1EDFF] dark:bg-purple-950/40 px-1.5 py-0.5 rounded-md mt-1 inline-block border border-purple-200/60">
+                            Ligne libre
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-[#64748B] dark:text-slate-400 font-mono">
+                            {item.reference || 'Article catalogue'}
+                          </span>
+                        )}
                       </div>
-                      {item.isFreeLine ? (
-                        <span className="text-[10px] text-purple-700 dark:text-purple-300 font-bold bg-[#F1EDFF] dark:bg-purple-950/40 px-1.5 py-0.5 rounded-md mt-1 inline-block border border-purple-200/60">
-                          Ligne libre
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-[#64748B] dark:text-slate-400 font-mono">
-                          {item.reference || 'Article catalogue'}
-                        </span>
-                      )}
                     </div>
                     <button
                       type="button"
@@ -1169,11 +1233,122 @@ export const SalePage: React.FC = () => {
         onSelectProduct={addToCart}
       />
 
-      {/* Phase 2 Test Modal */}
-      <Phase2TestModal
-        isOpen={showTestModal}
-        onClose={() => setShowTestModal(false)}
-      />
+      {/* Sale Return Modal */}
+      {returnInvoice && (
+        <SaleReturnModal
+          isOpen={Boolean(returnInvoice)}
+          onClose={() => setReturnInvoice(null)}
+          invoice={returnInvoice}
+        />
+      )}
+
+      {/* Invoice Selector Modal for initiating return from Sale page */}
+      {showSelectInvoiceForReturnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-white dark:bg-[#131B2E] rounded-3xl shadow-2xl border border-[#E8EDF2] dark:border-[#22304E] flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95">
+            <div className="p-4 sm:p-5 border-b border-[#E8EDF2] dark:border-[#22304E] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400 flex items-center justify-center">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-[#14213D] dark:text-white">
+                    Gérer un retour ou avoir
+                  </h3>
+                  <p className="text-xs text-[#64748B] dark:text-slate-400">
+                    Sélectionnez la vente ou le ticket concerné par le retour
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSelectInvoiceForReturnModal(false);
+                  setReturnSearchQuery('');
+                }}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 border-b border-[#E8EDF2] dark:border-[#22304E]">
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Rechercher par n° de facture, client, téléphone..."
+                  value={returnSearchQuery}
+                  onChange={(e) => setReturnSearchQuery(e.target.value)}
+                  className="w-full h-10 pl-10 pr-8 rounded-xl border border-[#E8EDF2] dark:border-[#22304E] bg-white dark:bg-slate-900 text-xs text-[#14213D] dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+                {returnSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setReturnSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {state.invoices
+                .filter((inv) => {
+                  if (inv.status === 'cancelled') return false;
+                  const q = returnSearchQuery.toLowerCase().trim();
+                  if (!q) return true;
+                  return (
+                    inv.number.toLowerCase().includes(q) ||
+                    inv.clientName.toLowerCase().includes(q) ||
+                    (inv.clientPhone && inv.clientPhone.toLowerCase().includes(q))
+                  );
+                })
+                .slice(0, 30)
+                .map((inv) => (
+                  <div
+                    key={inv.id}
+                    onClick={() => {
+                      setReturnInvoice(inv);
+                      setShowSelectInvoiceForReturnModal(false);
+                      setReturnSearchQuery('');
+                    }}
+                    className="p-3 rounded-2xl border border-[#E8EDF2] dark:border-[#22304E] hover:border-indigo-400 dark:hover:border-indigo-600 bg-white dark:bg-[#131B2E] transition-all cursor-pointer flex items-center justify-between gap-3 group"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-xs text-indigo-600 dark:text-indigo-400 group-hover:underline">
+                          #{inv.number}
+                        </span>
+                        <span className="text-xs font-bold text-[#14213D] dark:text-white">
+                          {inv.clientName}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-[#64748B] dark:text-slate-400 mt-0.5">
+                        {formatDate(inv.date)} • {inv.items.length} article(s) • Total : <strong>{curr(inv.total)}</strong>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-50 group-hover:bg-indigo-600 group-hover:text-white text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:group-hover:bg-indigo-600 text-xs font-bold transition-colors whitespace-nowrap"
+                    >
+                      Retourner
+                    </button>
+                  </div>
+                ))}
+
+              {state.invoices.filter((inv) => inv.status !== 'cancelled').length === 0 && (
+                <div className="text-center py-8 text-xs text-slate-400">
+                  Aucune vente enregistrée pour le moment.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
