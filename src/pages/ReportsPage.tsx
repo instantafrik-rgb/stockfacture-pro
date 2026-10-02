@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   HeartHandshake,
   User,
+  RotateCcw,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatDate, getTodayDateString, toLocalDateString } from '../utils/formatters';
@@ -286,6 +287,73 @@ export const ReportsPage: React.FC = () => {
     if (nonCommercialFilter === 'all') return nonCommercialExits;
     return nonCommercialExits.filter((m) => m.reason === nonCommercialFilter);
   }, [nonCommercialExits, nonCommercialFilter]);
+
+  // Filter returns according to selected period
+  const filteredReturns = useMemo(() => {
+    const today = getTodayDateString();
+    return (state.returns || []).filter((r) => {
+      const rDate = toLocalDateString(r.date || r.createdAt);
+      if (!rDate) return false;
+
+      if (period === 'all') return true;
+      if (period === 'today') return rDate === today;
+      if (period === '7') {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        return rDate >= toLocalDateString(d) && rDate <= today;
+      }
+      if (period === '30') {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return rDate >= toLocalDateString(d) && rDate <= today;
+      }
+      if (period === 'this_month') return rDate.startsWith(today.slice(0, 7));
+      if (period === 'this_year') return rDate.startsWith(today.slice(0, 4));
+      if (period === 'custom') {
+        if (customStartDate && customEndDate) {
+          return rDate >= customStartDate && rDate <= customEndDate;
+        }
+        if (customStartDate) return rDate >= customStartDate;
+        if (customEndDate) return rDate <= customEndDate;
+        return true;
+      }
+      return true;
+    });
+  }, [state.returns, period, customStartDate, customEndDate]);
+
+  // Returns metrics
+  const returnsMetrics = useMemo(() => {
+    let totalReturnedVal = 0;
+    let refundedVal = 0;
+    let creditNotesVal = 0;
+    let restockedQty = 0;
+    let exchangesCount = 0;
+
+    filteredReturns.forEach((r) => {
+      totalReturnedVal += r.totalReturnedAmount || 0;
+      if (r.actionType === 'refund') {
+        refundedVal += r.totalReturnedAmount || 0;
+      } else if (r.actionType === 'credit_note') {
+        creditNotesVal += r.totalReturnedAmount || 0;
+      } else if (r.actionType === 'exchange') {
+        exchangesCount += 1;
+      }
+      r.items.forEach((it) => {
+        if (it.restock) {
+          restockedQty += it.quantity;
+        }
+      });
+    });
+
+    return {
+      count: filteredReturns.length,
+      totalReturnedVal,
+      refundedVal,
+      creditNotesVal,
+      restockedQty,
+      exchangesCount,
+    };
+  }, [filteredReturns]);
 
   const handleSaveClosure = (closure: CashRegisterClosure) => {
     setLocalClosures((prev) => [closure, ...prev]);
@@ -907,6 +975,154 @@ export const ReportsPage: React.FC = () => {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 7. Retours, Avoirs & Échanges */}
+      <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400 flex items-center justify-center">
+              <RotateCcw className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                Retours, Avoirs & Échanges de Marchandises
+              </h3>
+              <p className="text-xs text-slate-500">
+                Suivi des remboursements, avoirs et réintégrations en stock
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => navigate('invoices')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 bg-indigo-50/50 dark:bg-indigo-950/30 text-xs font-bold hover:bg-indigo-100 transition-colors self-start sm:self-auto cursor-pointer"
+          >
+            <span>Voir les factures & retours</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* 4 Cards Metrics */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          <div className="p-3.5 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
+            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold uppercase block">
+              Total Retours ({returnsMetrics.count})
+            </span>
+            <div className="text-lg font-black font-mono text-indigo-900 dark:text-indigo-100 mt-0.5">
+              {curr(returnsMetrics.totalReturnedVal)}
+            </div>
+            <span className="text-[10px] text-indigo-500 mt-1 block">
+              Valeur marchande des retours
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+            <span className="text-[10px] text-slate-400 font-bold uppercase block">Remboursements</span>
+            <div className="text-lg font-black font-mono text-rose-600 dark:text-rose-400 mt-0.5">
+              {curr(returnsMetrics.refundedVal)}
+            </div>
+            <span className="text-[10px] text-slate-500 mt-1 block">Décaissements effectués</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+            <span className="text-[10px] text-slate-400 font-bold uppercase block">Avoirs Clients</span>
+            <div className="text-lg font-black font-mono text-purple-600 dark:text-purple-400 mt-0.5">
+              {curr(returnsMetrics.creditNotesVal)}
+            </div>
+            <span className="text-[10px] text-slate-500 mt-1 block">Crédits déduits des factures</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40">
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold uppercase block">
+              Stock Revendable
+            </span>
+            <div className="text-lg font-black font-mono text-emerald-900 dark:text-emerald-100 mt-0.5">
+              {returnsMetrics.restockedQty} unité(s)
+            </div>
+            <span className="text-[10px] text-emerald-600 mt-1 block">
+              Remises automatiquement en rayon
+            </span>
+          </div>
+        </div>
+
+        {/* Retours List */}
+        {filteredReturns.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            Aucun retour enregistré sur cette période
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                <tr>
+                  <th className="py-3 px-3">Date</th>
+                  <th className="py-3 px-3">Facture & Client</th>
+                  <th className="py-3 px-3 text-center">Type</th>
+                  <th className="py-3 px-3">Articles retournés</th>
+                  <th className="py-3 px-3 text-right">Montant</th>
+                  <th className="py-3 px-3">Motif</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredReturns.map((ret) => (
+                  <tr key={ret.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
+                    <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
+                      {formatDate(ret.date)}
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 block">
+                        Facture #{ret.invoiceNumber}
+                      </span>
+                      <span className="text-slate-700 dark:text-slate-300 font-medium">
+                        {ret.clientName}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-center whitespace-nowrap">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          ret.actionType === 'refund'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                            : ret.actionType === 'credit_note'
+                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300'
+                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
+                        }`}
+                      >
+                        {ret.actionType === 'refund'
+                          ? 'Remboursement'
+                          : ret.actionType === 'credit_note'
+                          ? 'Avoir client'
+                          : 'Échange'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-slate-700 dark:text-slate-300">
+                      {ret.items.map((it, idx) => (
+                        <div key={idx} className="text-[11px] leading-tight">
+                          <span className="font-bold">{it.quantity}x</span> {it.designation}{' '}
+                          {it.restock && (
+                            <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-1 py-0.2 rounded">
+                              Remis en stock
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="py-3 px-3 text-right font-bold font-mono text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                      {curr(ret.totalReturnedAmount)}
+                    </td>
+                    <td className="py-3 px-3 text-slate-500 text-[11px]">
+                      <span>{ret.reason}</span>
+                      {ret.notes && (
+                        <span className="block text-slate-400 text-[10px] italic">{ret.notes}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
