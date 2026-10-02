@@ -11,6 +11,7 @@ import { auth, signInWithGoogle as firebaseSignIn, logOut as firebaseLogOut, sub
 import { firestoreSyncService } from '../services/data/FirestoreSyncService';
 import { dataRepository, SyncStatus } from '../services/data';
 import { useApp } from './AppContext';
+import { markUserOnboardedLocally } from '../utils/onboardingUtils';
 
 interface AuthContextType {
   user: User | null;
@@ -70,6 +71,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           (currentState.products && currentState.products.length > 0) ||
           (currentState.clients && currentState.clients.length > 0) ||
           (currentState.invoices && currentState.invoices.length > 0);
+
+        if (hasCloud || hasLocal) {
+          markUserOnboardedLocally(currentUser.uid);
+        }
 
         if (!hasCloud && hasLocal) {
           // Local data exists on device, cloud is empty: propose migration

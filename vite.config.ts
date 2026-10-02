@@ -32,7 +32,15 @@ export default defineConfig(({ command }) => {
       VitePWA({
         registerType: 'autoUpdate',
 
-        includeAssets: ['icon.svg'],
+        includeAssets: [
+          'icon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-512x512-maskable.png',
+          'favicon-32x32.png',
+          'favicon-16x16.png',
+        ],
 
         manifest: {
           id: isBuild ? '/stockfacture-pro/' : '/',
@@ -52,8 +60,32 @@ export default defineConfig(({ command }) => {
 
           icons: [
             {
+              src: isBuild ? '/stockfacture-pro/pwa-192x192.png' : '/pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: isBuild ? '/stockfacture-pro/pwa-512x512.png' : '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: isBuild ? '/stockfacture-pro/pwa-512x512-maskable.png' : '/pwa-512x512-maskable.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+            {
+              src: isBuild ? '/stockfacture-pro/apple-touch-icon.png' : '/apple-touch-icon.png',
+              sizes: '180x180',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
               src: isBuild ? '/stockfacture-pro/icon.svg' : '/icon.svg',
-              sizes: '192x192 512x512',
+              sizes: 'any',
               type: 'image/svg+xml',
               purpose: 'any',
             },

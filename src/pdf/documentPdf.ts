@@ -52,6 +52,10 @@ export async function generateInvoicePdf(
     doc.text(phoneEmail, margin, compY);
     compY += 4.5;
   }
+  if (settings.website && settings.website.trim()) {
+    doc.text(`Site web : ${settings.website.trim()}`, margin, compY);
+    compY += 4.5;
+  }
   if (settings.taxId) {
     doc.text(`NIF / RCCM : ${settings.taxId}`, margin, compY);
     compY += 4.5;
@@ -504,7 +508,7 @@ export async function generateQuotePdf(
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(224, 231, 255);
-  const companyContact = [settings.phone, settings.email, settings.address].filter(Boolean).join(' • ');
+  const companyContact = [settings.phone, settings.email, settings.website, settings.address].filter(Boolean).join(' • ');
   doc.text(companyContact || 'Devis & Proposition commerciale', margin + 8, y + 19);
 
   doc.setFontSize(15);
@@ -739,6 +743,11 @@ export async function generateThermalReceiptPdf(
 
   if (settings.phone) {
     doc.text(`Tél : ${settings.phone}`, pageWidth / 2, y, { align: 'center' });
+    y += is58 ? 3.2 : 3.8;
+  }
+
+  if (settings.website && settings.website.trim()) {
+    doc.text(`Web : ${settings.website.trim()}`, pageWidth / 2, y, { align: 'center' });
     y += is58 ? 3.2 : 3.8;
   }
 

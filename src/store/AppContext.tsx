@@ -27,6 +27,7 @@ import {
 import { dataRepository, firestoreSyncService } from '../services/data';
 import { auth } from '../services/firebase';
 import { getDemoState, initialEmptyState } from '../data/demoData';
+import { isUserOnboarded, markUserOnboardedLocally } from '../utils/onboardingUtils';
 import {
   calculateLineTotal,
   calculateSubtotal,
@@ -252,13 +253,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           // If PIN is enabled, lock upon startup
           const shouldLock = Boolean(loaded.settings?.pinEnabled && loaded.settings?.pinCode);
+          const currentUserUid = auth.currentUser?.uid;
           const hasOnboardingDone =
+            isUserOnboarded(currentUserUid, loaded) ||
             Boolean(loaded.hasCompletedOnboarding) ||
-            Boolean(loaded.settings?.hasCompletedOnboarding) ||
-            (loaded.products && loaded.products.length > 0) ||
-            (loaded.invoices && loaded.invoices.length > 0) ||
-            (loaded.clients && loaded.clients.length > 0) ||
-            (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+            Boolean(loaded.settings?.hasCompletedOnboarding);
+
+          if (hasOnboardingDone) {
+            markUserOnboardedLocally(currentUserUid);
+          }
 
           setState({
             ...loaded,
@@ -292,16 +295,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firestoreSyncService.registerRemoteUpdateListener((updater) => {
       setState((prev) => {
         const next = updater(prev);
+        const currentUserUid = auth.currentUser?.uid;
         // Ensure hasCompletedOnboarding is never accidentally flipped back to false if the user has completed it or has business data
         const isCompleted =
-          Boolean(prev.hasCompletedOnboarding) ||
-          Boolean(next.hasCompletedOnboarding) ||
-          Boolean(next.settings?.hasCompletedOnboarding) ||
-          (next.products && next.products.length > 0) ||
-          (next.invoices && next.invoices.length > 0) ||
-          (next.clients && next.clients.length > 0) ||
-          (next.movements && next.movements.length > 0) ||
-          (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+          prev.hasCompletedOnboarding === true ||
+          next.hasCompletedOnboarding === true ||
+          next.settings?.hasCompletedOnboarding === true ||
+          isUserOnboarded(currentUserUid, next) ||
+          isUserOnboarded(currentUserUid, prev);
+
+        if (isCompleted) {
+          markUserOnboardedLocally(currentUserUid);
+        }
 
         const resolvedNext: AppState = {
           ...next,
@@ -1960,31 +1965,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       dataRepository.setUserScope(userId);
       const cached = await dataRepository.loadFullState();
-      if (cached && (cached.products?.length || cached.invoices?.length || cached.settings?.name)) {
-        const hasCompleted =
-          Boolean(cached.hasCompletedOnboarding) ||
-          Boolean(cached.settings?.hasCompletedOnboarding) ||
-          (cached.products && cached.products.length > 0) ||
-          (cached.invoices && cached.invoices.length > 0) ||
-          (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
 
+      // Check LocalStorage and local state first
+      const hasCompletedLocally = isUserOnboarded(userId, cached);
+
+      // Check remote cloud data in Firestore
+      let hasCompletedCloud = false;
+      if (userId) {
+        hasCompletedCloud = await firestoreSyncService.hasCloudData(userId);
+      }
+
+      const isCompleted = hasCompletedLocally || hasCompletedCloud;
+      if (isCompleted) {
+        markUserOnboardedLocally(userId);
+      }
+
+      if (cached && (cached.products?.length || cached.invoices?.length || cached.settings?.name)) {
         const normalizedCached: AppState = {
           ...cached,
           restockRequests: Array.isArray(cached.restockRequests) ? cached.restockRequests : [],
           returns: Array.isArray(cached.returns) ? cached.returns : [],
-          hasCompletedOnboarding: hasCompleted,
+          hasCompletedOnboarding: isCompleted || Boolean(cached.hasCompletedOnboarding),
           settings: {
             ...cached.settings,
-            hasCompletedOnboarding: hasCompleted,
+            hasCompletedOnboarding: isCompleted || Boolean(cached.settings?.hasCompletedOnboarding),
           },
         };
         stateRef.current = normalizedCached;
         setState(normalizedCached);
       } else {
-        const hasCompletedBefore = typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true';
-        const hasCloud = userId ? await firestoreSyncService.hasCloudData(userId) : false;
-
-        const isCompleted = Boolean(hasCloud || hasCompletedBefore);
         const readyState: AppState = {
           ...initialEmptyState,
           hasCompletedOnboarding: isCompleted,
@@ -2007,11 +2016,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const completeOnboarding = useCallback(
     async (customSettings?: { name: string; currency: string }) => {
-      try {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('stockfacture_onboarding_completed', 'true');
-        }
-      } catch {}
+      const uid = auth.currentUser?.uid;
+      markUserOnboardedLocally(uid);
 
       const updatedSettings: CompanySettings = {
         ...state.settings,
@@ -2026,9 +2032,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hasCompletedOnboarding: true,
       };
 
-      await persistState(nextState);
+      stateRef.current = nextState;
+      setState(nextState);
+
+      // 1. Immediately persist to IndexedDB
+      await dataRepository.saveFullState(nextState);
+
+      // 2. Immediately persist to Firestore dedicated flags if authenticated
+      if (uid) {
+        await firestoreSyncService.persistOnboardingStatus(uid);
+      }
+
+      // 3. Sync settings changes to cloud
+      firestoreSyncService.syncSettings(updatedSettings).catch((err) => {
+        console.warn('Firestore settings sync error during onboarding:', err);
+      });
     },
-    [state, persistState]
+    [state]
   );
 
   const importBackup = useCallback(

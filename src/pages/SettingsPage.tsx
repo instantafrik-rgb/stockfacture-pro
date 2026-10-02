@@ -180,8 +180,22 @@ export const SettingsPage: React.FC = () => {
               </label>
               <input
                 type="email"
+                placeholder="Ex: contact@moncommerce.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Site web
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: www.moncommerce.com"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
                 className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white"
               />
             </div>

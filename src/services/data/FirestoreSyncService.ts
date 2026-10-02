@@ -49,6 +49,7 @@ import {
   SaleReturn,
 } from '../../types';
 import { SyncStatus } from './types';
+import { markUserOnboardedLocally } from '../../utils/onboardingUtils';
 
 /**
  * Central utility to recursively sanitize objects before writing to Firestore.
@@ -220,30 +221,90 @@ export class FirestoreSyncService {
   }
 
   /**
-   * Check if remote Firestore has existing data for the user
+   * Check if remote Firestore has existing data or completed onboarding for the user.
+   * Multi-source verification to never lock out existing accounts.
    */
   public async hasCloudData(userId: string): Promise<boolean> {
     try {
+      // 1. Check dedicated onboarding doc
+      const onboardingRef = doc(db, 'users', userId, 'settings', 'onboarding');
+      const onboardingSnap = await getDoc(onboardingRef);
+      if (onboardingSnap.exists() && onboardingSnap.data()?.hasCompletedOnboarding) {
+        return true;
+      }
+
+      // 2. Check company settings doc
       const settingsRef = doc(db, 'users', userId, 'settings', 'company');
       const settingsSnap = await getDoc(settingsRef);
-      if (settingsSnap.exists()) return true;
+      if (settingsSnap.exists()) {
+        const data = settingsSnap.data();
+        if (data?.hasCompletedOnboarding || data?.name || data?.currency) {
+          return true;
+        }
+      }
 
+      // 3. Products
       const productsRef = collection(db, 'users', userId, 'products');
       const productsSnap = await getDocs(productsRef);
       if (!productsSnap.empty) return true;
 
+      // 4. Clients
       const clientsRef = collection(db, 'users', userId, 'clients');
       const clientsSnap = await getDocs(clientsRef);
       if (!clientsSnap.empty) return true;
 
+      // 5. Invoices
       const invoicesRef = collection(db, 'users', userId, 'invoices');
       const invoicesSnap = await getDocs(invoicesRef);
       if (!invoicesSnap.empty) return true;
+
+      // 6. Quotes
+      const quotesRef = collection(db, 'users', userId, 'quotes');
+      const quotesSnap = await getDocs(quotesRef);
+      if (!quotesSnap.empty) return true;
+
+      // 7. Movements
+      const movementsRef = collection(db, 'users', userId, 'movements');
+      const movementsSnap = await getDocs(movementsRef);
+      if (!movementsSnap.empty) return true;
 
       return false;
     } catch (err) {
       console.warn('[FirestoreSync] Error checking cloud data:', err);
       return false;
+    }
+  }
+
+  /**
+   * Persist onboarding completion flag directly to Firestore
+   * Guarantees persistence across devices, refresh, and logout/login.
+   */
+  public async persistOnboardingStatus(userId: string): Promise<void> {
+    try {
+      const nowIso = new Date().toISOString();
+      markUserOnboardedLocally(userId);
+
+      const onboardingRef = doc(db, 'users', userId, 'settings', 'onboarding');
+      await setDoc(
+        onboardingRef,
+        {
+          hasCompletedOnboarding: true,
+          completedAt: nowIso,
+        },
+        { merge: true }
+      );
+
+      const companyRef = doc(db, 'users', userId, 'settings', 'company');
+      await setDoc(
+        companyRef,
+        {
+          hasCompletedOnboarding: true,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn('[FirestoreSync] Failed to persist onboarding status to Firestore:', e);
     }
   }
 
@@ -417,6 +478,29 @@ export class FirestoreSyncService {
 
   // --- Real-Time Listeners for Bidirectional Synchronisation ---
   private subscribeToCollections(userId: string) {
+    // 0. Dedicated Onboarding listener
+    const onboardingRef = doc(db, 'users', userId, 'settings', 'onboarding');
+    const unsubOnboarding = onSnapshot(
+      onboardingRef,
+      (snap) => {
+        if (snap.exists() && snap.data()?.hasCompletedOnboarding) {
+          markUserOnboardedLocally(userId);
+          if (this.onRemoteUpdateCallback) {
+            this.onRemoteUpdateCallback((prev) => ({
+              ...prev,
+              hasCompletedOnboarding: true,
+              settings: {
+                ...prev.settings,
+                hasCompletedOnboarding: true,
+              },
+            }));
+          }
+        }
+      },
+      (err) => console.warn('[FirestoreSync] Onboarding snapshot listener warning:', err)
+    );
+    this.activeSubscriptions.push(unsubOnboarding);
+
     // 1. Settings listener
     const settingsRef = doc(db, 'users', userId, 'settings', 'company');
     const unsubSettings = onSnapshot(
@@ -424,6 +508,7 @@ export class FirestoreSyncService {
       (snap) => {
         if (snap.exists() && this.onRemoteUpdateCallback) {
           const cloudSettings = snap.data() as CompanySettings;
+          markUserOnboardedLocally(userId);
           this.onRemoteUpdateCallback((prev) => ({
             ...prev,
             hasCompletedOnboarding: true,
@@ -453,6 +538,10 @@ export class FirestoreSyncService {
               remoteProducts.push({ ...data, id: d.id });
             }
           });
+
+          if (remoteProducts.length > 0) {
+            markUserOnboardedLocally(userId);
+          }
 
           remoteProducts.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
@@ -500,6 +589,10 @@ export class FirestoreSyncService {
             }
           });
 
+          if (remoteInvoices.length > 0) {
+            markUserOnboardedLocally(userId);
+          }
+
           remoteInvoices.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
           this.onRemoteUpdateCallback((prev) => {
@@ -545,6 +638,10 @@ export class FirestoreSyncService {
               remoteClients.push({ ...data, id: d.id });
             }
           });
+
+          if (remoteClients.length > 0) {
+            markUserOnboardedLocally(userId);
+          }
 
           remoteClients.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 

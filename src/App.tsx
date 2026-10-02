@@ -21,10 +21,11 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ManualInvoicePage } from './pages/ManualInvoicePage';
 import { Sparkles, ArrowRight, Building2, CheckCircle2 } from 'lucide-react';
 import { notificationService } from './services/notificationService';
+import { isUserOnboarded } from './utils/onboardingUtils';
 
 const MainView: React.FC = () => {
   const { activeView, isLoading, state, completeOnboarding, navigate } = useApp();
-  const { isLoadingAuth } = useAuth();
+  const { isLoadingAuth, user } = useAuth();
   const [onboardingName, setOnboardingName] = useState(state.settings.name);
   const [onboardingCurrency, setOnboardingCurrency] = useState(state.settings.currency);
 
@@ -49,14 +50,7 @@ const MainView: React.FC = () => {
   }
 
   // Lightweight Onboarding modal on first run ONLY for truly brand-new accounts with zero data
-  const hasCompletedOnboarding =
-    Boolean(state.hasCompletedOnboarding) ||
-    Boolean(state.settings?.hasCompletedOnboarding) ||
-    (state.products && state.products.length > 0) ||
-    (state.invoices && state.invoices.length > 0) ||
-    (state.clients && state.clients.length > 0) ||
-    (state.movements && state.movements.length > 0) ||
-    (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+  const hasCompletedOnboarding = isUserOnboarded(user?.uid, state);
 
   if (!hasCompletedOnboarding) {
     return (

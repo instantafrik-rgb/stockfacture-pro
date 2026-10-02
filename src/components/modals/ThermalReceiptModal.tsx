@@ -189,6 +189,11 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
                   Tél : {settings.phone}
                 </p>
               )}
+              {settings.website && settings.website.trim() && (
+                <p className="text-[10px] sm:text-[11px] font-medium text-slate-700">
+                  Web : {settings.website.trim()}
+                </p>
+              )}
               {settings.taxId && (
                 <p className="text-[9px] text-slate-600">NIF/RCCM : {settings.taxId}</p>
               )}
