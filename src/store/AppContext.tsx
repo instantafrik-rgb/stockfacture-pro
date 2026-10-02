@@ -210,6 +210,7 @@ interface AppContextType {
   resetAllData: () => Promise<void>;
   resetStateOnLogout: () => Promise<void>;
   reloadStateForUser: (userId: string | null) => Promise<void>;
+  completeOnboarding: (customSettings?: { name: string; currency: string }) => Promise<void>;
   importBackup: (backupState: AppState) => Promise<boolean>;
 }
 
@@ -251,11 +252,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           // If PIN is enabled, lock upon startup
           const shouldLock = Boolean(loaded.settings?.pinEnabled && loaded.settings?.pinCode);
+          const hasOnboardingDone =
+            Boolean(loaded.hasCompletedOnboarding) ||
+            Boolean(loaded.settings?.hasCompletedOnboarding) ||
+            (loaded.products && loaded.products.length > 0) ||
+            (loaded.invoices && loaded.invoices.length > 0) ||
+            (loaded.clients && loaded.clients.length > 0) ||
+            (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+
           setState({
             ...loaded,
             restockRequests: Array.isArray(loaded.restockRequests) ? loaded.restockRequests : [],
             returns: Array.isArray(loaded.returns) ? loaded.returns : [],
             isLocked: shouldLock,
+            hasCompletedOnboarding: hasOnboardingDone,
+            settings: {
+              ...loaded.settings,
+              hasCompletedOnboarding: hasOnboardingDone,
+            },
           });
         } else {
           // Start with demo state for immediate exploration if first time
@@ -278,10 +292,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firestoreSyncService.registerRemoteUpdateListener((updater) => {
       setState((prev) => {
         const next = updater(prev);
-        stateRef.current = next;
+        // Ensure hasCompletedOnboarding is never accidentally flipped back to false if the user has completed it or has business data
+        const isCompleted =
+          Boolean(prev.hasCompletedOnboarding) ||
+          Boolean(next.hasCompletedOnboarding) ||
+          Boolean(next.settings?.hasCompletedOnboarding) ||
+          (next.products && next.products.length > 0) ||
+          (next.invoices && next.invoices.length > 0) ||
+          (next.clients && next.clients.length > 0) ||
+          (next.movements && next.movements.length > 0) ||
+          (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+
+        const resolvedNext: AppState = {
+          ...next,
+          hasCompletedOnboarding: isCompleted,
+          settings: {
+            ...next.settings,
+            hasCompletedOnboarding: isCompleted ? true : next.settings?.hasCompletedOnboarding,
+          },
+        };
+
+        stateRef.current = resolvedNext;
         // Persist to local cache so offline mode is immediately ready
-        dataRepository.saveFullState(next);
-        return next;
+        dataRepository.saveFullState(resolvedNext);
+        return resolvedNext;
       });
     });
   }, []);
@@ -1927,16 +1961,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dataRepository.setUserScope(userId);
       const cached = await dataRepository.loadFullState();
       if (cached && (cached.products?.length || cached.invoices?.length || cached.settings?.name)) {
+        const hasCompleted =
+          Boolean(cached.hasCompletedOnboarding) ||
+          Boolean(cached.settings?.hasCompletedOnboarding) ||
+          (cached.products && cached.products.length > 0) ||
+          (cached.invoices && cached.invoices.length > 0) ||
+          (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+
         const normalizedCached: AppState = {
           ...cached,
           restockRequests: Array.isArray(cached.restockRequests) ? cached.restockRequests : [],
           returns: Array.isArray(cached.returns) ? cached.returns : [],
+          hasCompletedOnboarding: hasCompleted,
+          settings: {
+            ...cached.settings,
+            hasCompletedOnboarding: hasCompleted,
+          },
         };
         stateRef.current = normalizedCached;
         setState(normalizedCached);
       } else {
-        stateRef.current = initialEmptyState;
-        setState(initialEmptyState);
+        const hasCompletedBefore = typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true';
+        const hasCloud = userId ? await firestoreSyncService.hasCloudData(userId) : false;
+
+        const isCompleted = Boolean(hasCloud || hasCompletedBefore);
+        const readyState: AppState = {
+          ...initialEmptyState,
+          hasCompletedOnboarding: isCompleted,
+          settings: {
+            ...initialEmptyState.settings,
+            hasCompletedOnboarding: isCompleted ? true : undefined,
+          },
+        };
+        stateRef.current = readyState;
+        setState(readyState);
       }
     } catch (e) {
       console.error('Failed to reload state for user:', e);
@@ -1946,6 +2004,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsLoading(false);
     }
   }, []);
+
+  const completeOnboarding = useCallback(
+    async (customSettings?: { name: string; currency: string }) => {
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('stockfacture_onboarding_completed', 'true');
+        }
+      } catch {}
+
+      const updatedSettings: CompanySettings = {
+        ...state.settings,
+        hasCompletedOnboarding: true,
+        ...(customSettings?.name ? { name: customSettings.name.trim() } : {}),
+        ...(customSettings?.currency ? { currency: customSettings.currency.trim() } : {}),
+      };
+
+      const nextState: AppState = {
+        ...state,
+        settings: updatedSettings,
+        hasCompletedOnboarding: true,
+      };
+
+      await persistState(nextState);
+    },
+    [state, persistState]
+  );
 
   const importBackup = useCallback(
     async (backupState: AppState) => {
@@ -2005,6 +2089,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       resetAllData,
       resetStateOnLogout,
       reloadStateForUser,
+      completeOnboarding,
       importBackup,
     }),
     [
@@ -2047,6 +2132,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       resetAllData,
       resetStateOnLogout,
       reloadStateForUser,
+      completeOnboarding,
       importBackup,
     ]
   );

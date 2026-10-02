@@ -26,6 +26,7 @@ export const defaultSettings: CompanySettings = {
   pinEnabled: false,
   pinCode: '',
   theme: 'light',
+  hasCompletedOnboarding: typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true',
 };
 
 export const initialEmptyState: AppState = {
@@ -48,7 +49,7 @@ export const initialEmptyState: AppState = {
   restockRequests: [],
   returns: [],
   isLocked: false,
-  hasCompletedOnboarding: false,
+  hasCompletedOnboarding: typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true',
 };
 
 export function getDemoState(): AppState {

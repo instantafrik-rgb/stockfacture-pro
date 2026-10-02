@@ -426,7 +426,12 @@ export class FirestoreSyncService {
           const cloudSettings = snap.data() as CompanySettings;
           this.onRemoteUpdateCallback((prev) => ({
             ...prev,
-            settings: { ...prev.settings, ...cloudSettings },
+            hasCompletedOnboarding: true,
+            settings: {
+              ...prev.settings,
+              ...cloudSettings,
+              hasCompletedOnboarding: true,
+            },
           }));
         }
         this.markCollectionHealthy('settings');

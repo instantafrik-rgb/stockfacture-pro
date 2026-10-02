@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
-import { AuthProvider } from './store/AuthContext';
+import { AuthProvider, useAuth } from './store/AuthContext';
 import { CloudMigrationBanner } from './components/common/CloudMigrationBanner';
 import { PWAUpdateToast } from './components/common/PWAUpdateToast';
 import { AppShell } from './components/layout/AppShell';
@@ -23,7 +23,8 @@ import { Sparkles, ArrowRight, Building2, CheckCircle2 } from 'lucide-react';
 import { notificationService } from './services/notificationService';
 
 const MainView: React.FC = () => {
-  const { activeView, isLoading, state, updateSettings, navigate } = useApp();
+  const { activeView, isLoading, state, completeOnboarding, navigate } = useApp();
+  const { isLoadingAuth } = useAuth();
   const [onboardingName, setOnboardingName] = useState(state.settings.name);
   const [onboardingCurrency, setOnboardingCurrency] = useState(state.settings.currency);
 
@@ -36,7 +37,7 @@ const MainView: React.FC = () => {
     return () => notificationService.cleanup();
   }, [state, navigate]);
 
-  if (isLoading) {
+  if (isLoading || isLoadingAuth) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] text-[#14213D] space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-orange-500 text-white flex items-center justify-center animate-pulse shadow-md shadow-orange-500/20">
@@ -47,8 +48,17 @@ const MainView: React.FC = () => {
     );
   }
 
-  // Lightweight Onboarding modal on first run
-  if (!state.hasCompletedOnboarding) {
+  // Lightweight Onboarding modal on first run ONLY for truly brand-new accounts with zero data
+  const hasCompletedOnboarding =
+    Boolean(state.hasCompletedOnboarding) ||
+    Boolean(state.settings?.hasCompletedOnboarding) ||
+    (state.products && state.products.length > 0) ||
+    (state.invoices && state.invoices.length > 0) ||
+    (state.clients && state.clients.length > 0) ||
+    (state.movements && state.movements.length > 0) ||
+    (typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true');
+
+  if (!hasCompletedOnboarding) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#FAFAF8] p-4">
         <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-xl border border-[#E8EDF2] dark:border-slate-800 space-y-5 animate-in zoom-in-95">
@@ -97,15 +107,12 @@ const MainView: React.FC = () => {
             <button
               type="button"
               onClick={async () => {
-                await updateSettings({
+                await completeOnboarding({
                   name: onboardingName.trim() || 'Mon Commerce',
                   currency: onboardingCurrency.trim() || 'FCFA',
                 });
-                // mark onboarding as completed in context
-                const loaded = state;
-                loaded.hasCompletedOnboarding = true;
               }}
-              className="w-full py-3.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-sm shadow-md shadow-orange-500/20 transition-transform active:scale-95 flex items-center justify-center gap-2"
+              className="w-full py-3.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-sm shadow-md shadow-orange-500/20 transition-transform active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
             >
               <span>Démarrer maintenant</span>
               <ArrowRight className="w-4 h-4" />

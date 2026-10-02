@@ -54,6 +54,7 @@ export interface CompanySettings {
   pinEnabled: boolean;
   pinCode?: string; // 4 to 6 digit hashed or plain PIN
   theme: 'light' | 'dark' | 'system';
+  hasCompletedOnboarding?: boolean;
   // Backup & Notifications settings
   backupReminderEnabled?: boolean; // default: true
   backupReminderTime?: string; // default: "20:00"

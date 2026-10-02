@@ -51,7 +51,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const unsubscribe = subscribeToAuth(async (currentUser) => {
       setUser(currentUser);
-      setIsLoadingAuth(false);
       setAuthError(null);
 
       if (currentUser) {
@@ -83,6 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         firestoreSyncService.stopSync();
         setHasLocalDataToMigrate(false);
       }
+      setIsLoadingAuth(false);
     });
 
     return () => unsubscribe();
