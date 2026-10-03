@@ -61,10 +61,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (reloadStateForUser) {
           await reloadStateForUser(currentUser.uid);
         }
+        setIsLoadingAuth(false);
+
         // Start real-time Firestore listeners for this user
         firestoreSyncService.startSync(currentUser.uid);
 
-        // Check for first-login migration safety
+        // Check for first-login migration safety non-blockingly
         const hasCloud = await firestoreSyncService.hasCloudData(currentUser.uid);
         const currentState = stateRef.current;
         const hasLocal =

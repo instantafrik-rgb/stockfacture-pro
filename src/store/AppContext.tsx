@@ -235,21 +235,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const loaded = await dataRepository.loadFullState();
         if (loaded) {
-          // If categories still contain old grocery demo data, upgrade to telephony & IT accessories boutique
-          const hasOldGroceryData = loaded.categories?.some((c) =>
-            c.name.toLowerCase().includes('alimentation') || c.name.toLowerCase().includes('épicerie')
-          );
-          if (hasOldGroceryData) {
-            const demo = getDemoState();
-            await dataRepository.saveFullState(demo);
-            setState(demo);
-            return;
-          }
-
           // Strictly ensure light theme is the default experience
           if (!loaded.settings?.theme || loaded.settings.theme === 'dark') {
             loaded.settings = { ...loaded.settings, theme: 'light' };
-            await dataRepository.saveFullState(loaded);
           }
           // If PIN is enabled, lock upon startup
           const shouldLock = Boolean(loaded.settings?.pinEnabled && loaded.settings?.pinCode);
@@ -263,7 +251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             markUserOnboardedLocally(currentUserUid);
           }
 
-          setState({
+          const initializedState: AppState = {
             ...loaded,
             restockRequests: Array.isArray(loaded.restockRequests) ? loaded.restockRequests : [],
             returns: Array.isArray(loaded.returns) ? loaded.returns : [],
@@ -273,16 +261,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ...loaded.settings,
               hasCompletedOnboarding: hasOnboardingDone,
             },
-          });
+          };
+
+          stateRef.current = initializedState;
+          setState(initializedState);
         } else {
-          // Start with demo state for immediate exploration if first time
-          const demo = getDemoState();
-          await dataRepository.saveFullState(demo);
-          setState(demo);
+          // Pristine initial state — NEVER auto-inject demo data
+          stateRef.current = initialEmptyState;
+          setState(initialEmptyState);
         }
       } catch (e) {
         console.error('Initialization error:', e);
-        setState(getDemoState());
+        stateRef.current = initialEmptyState;
+        setState(initialEmptyState);
       } finally {
         setIsLoading(false);
       }
@@ -1966,12 +1957,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dataRepository.setUserScope(userId);
       const cached = await dataRepository.loadFullState();
 
-      // Check LocalStorage and local state first
+      // Check LocalStorage and local state first (instant, 0ms)
       const hasCompletedLocally = isUserOnboarded(userId, cached);
 
-      // Check remote cloud data in Firestore
+      // Only check cloud onboarding if not already completed locally
       let hasCompletedCloud = false;
-      if (userId) {
+      if (userId && !hasCompletedLocally) {
         hasCompletedCloud = await firestoreSyncService.hasCloudData(userId);
       }
 

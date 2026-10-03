@@ -6,6 +6,30 @@
 import { AppState, CompanySettings, Category, Product, Client, Invoice, PaymentRecord, StockMovement, Quote, RestockRequest } from '../types';
 
 export const defaultSettings: CompanySettings = {
+  name: '',
+  address: '',
+  phone: '',
+  email: '',
+  website: '',
+  taxId: '',
+  currency: 'FCFA',
+  currencyPosition: 'after',
+  invoicePrefix: 'FAC-2026-',
+  nextInvoiceNumber: 1001,
+  quotePrefix: 'DEV-2026-',
+  nextQuoteNumber: 1001,
+  vatEnabled: false,
+  vatRate: 18,
+  paymentTerms: 'Règlement à réception.',
+  invoiceFooterNote: 'Merci pour votre confiance !',
+  allowNegativeStock: false,
+  pinEnabled: false,
+  pinCode: '',
+  theme: 'light',
+  hasCompletedOnboarding: false,
+};
+
+export const demoSettings: CompanySettings = {
   name: 'TechMobile & Informatique Pro',
   address: 'Avenue des Télécoms, Rue du Commerce Tech, Abidjan',
   phone: '+225 07 88 99 00 11',
@@ -26,7 +50,7 @@ export const defaultSettings: CompanySettings = {
   pinEnabled: false,
   pinCode: '',
   theme: 'light',
-  hasCompletedOnboarding: typeof window !== 'undefined' && localStorage.getItem('stockfacture_onboarding_completed') === 'true',
+  hasCompletedOnboarding: true,
 };
 
 export const initialEmptyState: AppState = {
@@ -656,7 +680,7 @@ export function getDemoState(): AppState {
   ];
 
   return {
-    settings: defaultSettings,
+    settings: demoSettings,
     categories,
     products,
     movements,

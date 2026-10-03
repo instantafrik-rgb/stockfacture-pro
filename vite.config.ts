@@ -43,7 +43,7 @@ export default defineConfig(({ command }) => {
         ],
 
         manifest: {
-          id: isBuild ? '/stockfacture-pro/' : '/',
+          id: './',
           name: 'StockFacture Pro',
           short_name: 'StockFacture',
           description:
@@ -55,36 +55,36 @@ export default defineConfig(({ command }) => {
           display: 'standalone',
           orientation: 'portrait',
 
-          start_url: isBuild ? '/stockfacture-pro/' : '/',
-          scope: isBuild ? '/stockfacture-pro/' : '/',
+          start_url: './',
+          scope: './',
 
           icons: [
             {
-              src: isBuild ? '/stockfacture-pro/pwa-192x192.png' : '/pwa-192x192.png',
+              src: 'pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: isBuild ? '/stockfacture-pro/pwa-512x512.png' : '/pwa-512x512.png',
+              src: 'pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: isBuild ? '/stockfacture-pro/pwa-512x512-maskable.png' : '/pwa-512x512-maskable.png',
+              src: 'pwa-512x512-maskable.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
             },
             {
-              src: isBuild ? '/stockfacture-pro/apple-touch-icon.png' : '/apple-touch-icon.png',
+              src: 'apple-touch-icon.png',
               sizes: '180x180',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: isBuild ? '/stockfacture-pro/icon.svg' : '/icon.svg',
+              src: 'icon.svg',
               sizes: 'any',
               type: 'image/svg+xml',
               purpose: 'any',

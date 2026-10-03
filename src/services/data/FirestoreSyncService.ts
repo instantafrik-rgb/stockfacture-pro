@@ -32,6 +32,8 @@ import {
   writeBatch,
   runTransaction,
   increment,
+  query,
+  limit,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import {
@@ -226,16 +228,18 @@ export class FirestoreSyncService {
    */
   public async hasCloudData(userId: string): Promise<boolean> {
     try {
-      // 1. Check dedicated onboarding doc
+      // 1. Parallel check of onboarding and company settings (fast single doc lookups)
       const onboardingRef = doc(db, 'users', userId, 'settings', 'onboarding');
-      const onboardingSnap = await getDoc(onboardingRef);
+      const settingsRef = doc(db, 'users', userId, 'settings', 'company');
+
+      const [onboardingSnap, settingsSnap] = await Promise.all([
+        getDoc(onboardingRef),
+        getDoc(settingsRef),
+      ]);
+
       if (onboardingSnap.exists() && onboardingSnap.data()?.hasCompletedOnboarding) {
         return true;
       }
-
-      // 2. Check company settings doc
-      const settingsRef = doc(db, 'users', userId, 'settings', 'company');
-      const settingsSnap = await getDoc(settingsRef);
       if (settingsSnap.exists()) {
         const data = settingsSnap.data();
         if (data?.hasCompletedOnboarding || data?.name || data?.currency) {
@@ -243,32 +247,21 @@ export class FirestoreSyncService {
         }
       }
 
-      // 3. Products
-      const productsRef = collection(db, 'users', userId, 'products');
-      const productsSnap = await getDocs(productsRef);
-      if (!productsSnap.empty) return true;
+      // 2. Parallel quick check for existence in primary collections
+      const collectionsToCheck = ['products', 'clients', 'invoices', 'quotes', 'movements'];
+      const checks = collectionsToCheck.map(async (colName) => {
+        try {
+          const colRef = collection(db, 'users', userId, colName);
+          const q = query(colRef, limit(1));
+          const snap = await getDocs(q);
+          return !snap.empty;
+        } catch {
+          return false;
+        }
+      });
 
-      // 4. Clients
-      const clientsRef = collection(db, 'users', userId, 'clients');
-      const clientsSnap = await getDocs(clientsRef);
-      if (!clientsSnap.empty) return true;
-
-      // 5. Invoices
-      const invoicesRef = collection(db, 'users', userId, 'invoices');
-      const invoicesSnap = await getDocs(invoicesRef);
-      if (!invoicesSnap.empty) return true;
-
-      // 6. Quotes
-      const quotesRef = collection(db, 'users', userId, 'quotes');
-      const quotesSnap = await getDocs(quotesRef);
-      if (!quotesSnap.empty) return true;
-
-      // 7. Movements
-      const movementsRef = collection(db, 'users', userId, 'movements');
-      const movementsSnap = await getDocs(movementsRef);
-      if (!movementsSnap.empty) return true;
-
-      return false;
+      const results = await Promise.all(checks);
+      return results.some(Boolean);
     } catch (err) {
       console.warn('[FirestoreSync] Error checking cloud data:', err);
       return false;
@@ -914,6 +907,8 @@ export class FirestoreSyncService {
   // --- Auto-upload helpers for unmigrated local collections ---
   private async syncLocalClientsIfCloudEmpty(userId: string, clients: Client[]) {
     if (!clients || clients.length === 0) return;
+    // Guard: Never auto-sync demo clients to user cloud storage
+    if (clients.some((c) => c.id === 'cli-1' || c.name === 'Amadou Diallo')) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
@@ -940,6 +935,8 @@ export class FirestoreSyncService {
 
   private async syncLocalProductsIfCloudEmpty(userId: string, products: Product[]) {
     if (!products || products.length === 0) return;
+    // Guard: Never auto-sync demo products to user cloud storage
+    if (products.some((p) => p.id === 'prod-chg-1' || p.name === 'Chargeur Rapide 33W Type-C')) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
@@ -965,6 +962,8 @@ export class FirestoreSyncService {
 
   private async syncLocalInvoicesIfCloudEmpty(userId: string, invoices: Invoice[]) {
     if (!invoices || invoices.length === 0) return;
+    // Guard: Never auto-sync demo invoices to user cloud storage
+    if (invoices.some((i) => i.id === 'inv-1001' || i.number === 'FAC-2026-1001')) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
