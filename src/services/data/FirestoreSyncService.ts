@@ -53,6 +53,15 @@ import {
 import { SyncStatus } from './types';
 import { markUserOnboardedLocally } from '../../utils/onboardingUtils';
 import { isDemoSettings, hasCustomUserSettings, cleanCompanySettings } from '../../utils/settingsUtils';
+import {
+  isDemoProduct,
+  isDemoClient,
+  isDemoInvoice,
+  isDemoQuote,
+  isDemoPayment,
+  isDemoMovement,
+  isDemoRestockRequest,
+} from '../../utils/demoFilter';
 
 /**
  * Central utility to recursively sanitize objects before writing to Firestore.
@@ -188,6 +197,11 @@ export class FirestoreSyncService {
     };
     this.notifyStatus();
 
+    // Proactively purge any residual demo documents from Firestore for this user in background
+    this.purgeAllDemoDataFromCloud(userId).catch((err) => {
+      console.warn('[FirestoreSync] Initial demo purge warning:', err);
+    });
+
     try {
       this.subscribeToCollections(userId);
     } catch (e: any) {
@@ -199,6 +213,62 @@ export class FirestoreSyncService {
       };
       this.notifyStatus();
     }
+  }
+
+  /**
+   * Permanently purge any residual demo documents from the user's Firestore cloud storage.
+   * Keeps all genuine user products, invoices, clients, quotes, payments, movements, and categories intact.
+   */
+  public async purgeAllDemoDataFromCloud(userId: string): Promise<number> {
+    let deletedCount = 0;
+    try {
+      const collectionsToCheck = [
+        { name: 'products', filter: isDemoProduct },
+        { name: 'clients', filter: isDemoClient },
+        { name: 'invoices', filter: isDemoInvoice },
+        { name: 'quotes', filter: isDemoQuote },
+        { name: 'payments', filter: isDemoPayment },
+        { name: 'movements', filter: isDemoMovement },
+        { name: 'restockRequests', filter: isDemoRestockRequest },
+      ];
+
+      for (const col of collectionsToCheck) {
+        try {
+          const colRef = collection(db, 'users', userId, col.name);
+          const snap = await getDocs(colRef);
+          const toDelete: string[] = [];
+          snap.forEach((d) => {
+            const data = { ...d.data(), id: d.id };
+            if (col.filter(data as any)) {
+              toDelete.push(d.id);
+            }
+          });
+
+          if (toDelete.length > 0) {
+            let batch = writeBatch(db);
+            let bCount = 0;
+            for (const docId of toDelete) {
+              batch.delete(doc(db, 'users', userId, col.name, docId));
+              bCount++;
+              deletedCount++;
+              if (bCount >= 400) {
+                await batch.commit();
+                batch = writeBatch(db);
+                bCount = 0;
+              }
+            }
+            if (bCount > 0) {
+              await batch.commit();
+            }
+          }
+        } catch (colErr) {
+          console.warn(`[FirestoreSync] Purge error on ${col.name}:`, colErr);
+        }
+      }
+    } catch (err) {
+      console.warn('[FirestoreSync] purgeAllDemoDataFromCloud error:', err);
+    }
+    return deletedCount;
   }
 
   /**
@@ -338,7 +408,8 @@ export class FirestoreSyncService {
       };
 
       // Products
-      for (const p of localState.products) {
+      for (const p of localState.products || []) {
+        if (isDemoProduct(p)) continue;
         const ref = doc(db, 'users', userId, 'products', p.id);
         const sanitizedProduct = sanitizeForFirestore({
           ...p,
@@ -351,7 +422,8 @@ export class FirestoreSyncService {
       }
 
       // Clients
-      for (const c of localState.clients) {
+      for (const c of localState.clients || []) {
+        if (isDemoClient(c)) continue;
         const ref = doc(db, 'users', userId, 'clients', c.id);
         const sanitizedClient = sanitizeForFirestore({
           ...c,
@@ -364,7 +436,8 @@ export class FirestoreSyncService {
       }
 
       // Invoices
-      for (const inv of localState.invoices) {
+      for (const inv of localState.invoices || []) {
+        if (isDemoInvoice(inv)) continue;
         const ref = doc(db, 'users', userId, 'invoices', inv.id);
         const sanitizedInvoice = sanitizeForFirestore({
           ...inv,
@@ -377,7 +450,8 @@ export class FirestoreSyncService {
       }
 
       // Quotes
-      for (const q of localState.quotes) {
+      for (const q of localState.quotes || []) {
+        if (isDemoQuote(q)) continue;
         const ref = doc(db, 'users', userId, 'quotes', q.id);
         const sanitizedQuote = sanitizeForFirestore({
           ...q,
@@ -390,7 +464,8 @@ export class FirestoreSyncService {
       }
 
       // Payments
-      for (const pay of localState.payments) {
+      for (const pay of localState.payments || []) {
+        if (isDemoPayment(pay)) continue;
         const ref = doc(db, 'users', userId, 'payments', pay.id);
         const sanitizedPayment = sanitizeForFirestore({
           ...pay,
@@ -402,7 +477,8 @@ export class FirestoreSyncService {
       }
 
       // Stock Movements
-      for (const m of localState.movements) {
+      for (const m of localState.movements || []) {
+        if (isDemoMovement(m)) continue;
         const ref = doc(db, 'users', userId, 'movements', m.id);
         const sanitizedMovement = sanitizeForFirestore({
           ...m,
@@ -414,7 +490,7 @@ export class FirestoreSyncService {
       }
 
       // Categories
-      for (const cat of localState.categories) {
+      for (const cat of localState.categories || []) {
         const ref = doc(db, 'users', userId, 'categories', cat.id);
         batch.set(ref, sanitizeForFirestore(cat));
         count++;
@@ -434,6 +510,7 @@ export class FirestoreSyncService {
       // Restock Requests (Clients à relancer)
       if (localState.restockRequests) {
         for (const rr of localState.restockRequests) {
+          if (isDemoRestockRequest(rr)) continue;
           const ref = doc(db, 'users', userId, 'restockRequests', rr.id);
           batch.set(ref, sanitizeForFirestore(rr));
           count++;
@@ -578,7 +655,13 @@ export class FirestoreSyncService {
           snap.forEach((d) => {
             const data = d.data() as Product & { _deleted?: boolean };
             if (!data._deleted) {
-              remoteProducts.push({ ...data, id: d.id });
+              const item = { ...data, id: d.id };
+              if (isDemoProduct(item)) {
+                // Permanently clean up demo products from cloud
+                deleteDoc(doc(db, 'users', userId, 'products', d.id)).catch(() => {});
+              } else {
+                remoteProducts.push(item);
+              }
             }
           });
 
@@ -589,13 +672,14 @@ export class FirestoreSyncService {
           remoteProducts.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            if (remoteProducts.length === 0 && prev.products && prev.products.length > 0) {
-              this.syncLocalProductsIfCloudEmpty(userId, prev.products);
-              return prev;
+            const cleanPrevProducts = (prev.products || []).filter((p) => !isDemoProduct(p));
+            if (remoteProducts.length === 0 && cleanPrevProducts.length > 0) {
+              this.syncLocalProductsIfCloudEmpty(userId, cleanPrevProducts);
+              return { ...prev, products: cleanPrevProducts };
             }
 
             const remoteIds = new Set(remoteProducts.map((p) => p.id));
-            const pendingLocal = prev.products.filter(
+            const pendingLocal = cleanPrevProducts.filter(
               (p) => !remoteIds.has(p.id) && isRecentlyCreated(p.createdAt)
             );
 
@@ -628,7 +712,13 @@ export class FirestoreSyncService {
           snap.forEach((d) => {
             const data = d.data() as Invoice & { _deleted?: boolean };
             if (!data._deleted) {
-              remoteInvoices.push({ ...data, id: d.id });
+              const item = { ...data, id: d.id };
+              if (isDemoInvoice(item)) {
+                // Permanently clean up demo invoices from cloud
+                deleteDoc(doc(db, 'users', userId, 'invoices', d.id)).catch(() => {});
+              } else {
+                remoteInvoices.push(item);
+              }
             }
           });
 
@@ -639,13 +729,14 @@ export class FirestoreSyncService {
           remoteInvoices.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            if (remoteInvoices.length === 0 && prev.invoices && prev.invoices.length > 0) {
-              this.syncLocalInvoicesIfCloudEmpty(userId, prev.invoices);
-              return prev;
+            const cleanPrevInvoices = (prev.invoices || []).filter((i) => !isDemoInvoice(i));
+            if (remoteInvoices.length === 0 && cleanPrevInvoices.length > 0) {
+              this.syncLocalInvoicesIfCloudEmpty(userId, cleanPrevInvoices);
+              return { ...prev, invoices: cleanPrevInvoices };
             }
 
             const remoteIds = new Set(remoteInvoices.map((i) => i.id));
-            const pendingLocal = prev.invoices.filter(
+            const pendingLocal = cleanPrevInvoices.filter(
               (i) => !remoteIds.has(i.id) && isRecentlyCreated(i.createdAt)
             );
 
@@ -678,7 +769,13 @@ export class FirestoreSyncService {
           snap.forEach((d) => {
             const data = d.data() as Client & { _deleted?: boolean };
             if (!data._deleted) {
-              remoteClients.push({ ...data, id: d.id });
+              const item = { ...data, id: d.id };
+              if (isDemoClient(item)) {
+                // Permanently clean up demo clients from cloud
+                deleteDoc(doc(db, 'users', userId, 'clients', d.id)).catch(() => {});
+              } else {
+                remoteClients.push(item);
+              }
             }
           });
 
@@ -689,15 +786,14 @@ export class FirestoreSyncService {
           remoteClients.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            // Anti-data-loss protection:
-            // If remote collection has 0 clients but local device has clients, preserve and upload!
-            if (remoteClients.length === 0 && prev.clients && prev.clients.length > 0) {
-              this.syncLocalClientsIfCloudEmpty(userId, prev.clients);
-              return prev;
+            const cleanPrevClients = (prev.clients || []).filter((c) => !isDemoClient(c));
+            if (remoteClients.length === 0 && cleanPrevClients.length > 0) {
+              this.syncLocalClientsIfCloudEmpty(userId, cleanPrevClients);
+              return { ...prev, clients: cleanPrevClients };
             }
 
             const remoteIds = new Set(remoteClients.map((c) => c.id));
-            const pendingLocal = prev.clients.filter(
+            const pendingLocal = cleanPrevClients.filter(
               (c) => !remoteIds.has(c.id) && isRecentlyCreated(c.createdAt)
             );
 
@@ -730,20 +826,26 @@ export class FirestoreSyncService {
           snap.forEach((d) => {
             const data = d.data() as Quote & { _deleted?: boolean };
             if (!data._deleted) {
-              remoteQuotes.push({ ...data, id: d.id });
+              const item = { ...data, id: d.id };
+              if (isDemoQuote(item)) {
+                deleteDoc(doc(db, 'users', userId, 'quotes', d.id)).catch(() => {});
+              } else {
+                remoteQuotes.push(item);
+              }
             }
           });
 
           remoteQuotes.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            if (remoteQuotes.length === 0 && prev.quotes && prev.quotes.length > 0) {
-              this.syncLocalQuotesIfCloudEmpty(userId, prev.quotes);
-              return prev;
+            const cleanPrevQuotes = (prev.quotes || []).filter((q) => !isDemoQuote(q));
+            if (remoteQuotes.length === 0 && cleanPrevQuotes.length > 0) {
+              this.syncLocalQuotesIfCloudEmpty(userId, cleanPrevQuotes);
+              return { ...prev, quotes: cleanPrevQuotes };
             }
 
             const remoteIds = new Set(remoteQuotes.map((q) => q.id));
-            const pendingLocal = prev.quotes.filter(
+            const pendingLocal = cleanPrevQuotes.filter(
               (q) => !remoteIds.has(q.id) && isRecentlyCreated(q.createdAt)
             );
 
@@ -774,19 +876,25 @@ export class FirestoreSyncService {
         if (this.onRemoteUpdateCallback) {
           const remotePayments: PaymentRecord[] = [];
           snap.forEach((d) => {
-            remotePayments.push({ ...(d.data() as PaymentRecord), id: d.id });
+            const item = { ...(d.data() as PaymentRecord), id: d.id };
+            if (isDemoPayment(item)) {
+              deleteDoc(doc(db, 'users', userId, 'payments', d.id)).catch(() => {});
+            } else {
+              remotePayments.push(item);
+            }
           });
 
           remotePayments.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            if (remotePayments.length === 0 && prev.payments && prev.payments.length > 0) {
-              this.syncLocalPaymentsIfCloudEmpty(userId, prev.payments);
-              return prev;
+            const cleanPrevPayments = (prev.payments || []).filter((p) => !isDemoPayment(p));
+            if (remotePayments.length === 0 && cleanPrevPayments.length > 0) {
+              this.syncLocalPaymentsIfCloudEmpty(userId, cleanPrevPayments);
+              return { ...prev, payments: cleanPrevPayments };
             }
 
             const remoteIds = new Set(remotePayments.map((p) => p.id));
-            const pendingLocal = prev.payments.filter(
+            const pendingLocal = cleanPrevPayments.filter(
               (p) => !remoteIds.has(p.id) && isRecentlyCreated(p.createdAt)
             );
 
@@ -817,19 +925,25 @@ export class FirestoreSyncService {
         if (this.onRemoteUpdateCallback) {
           const remoteMovements: StockMovement[] = [];
           snap.forEach((d) => {
-            remoteMovements.push({ ...(d.data() as StockMovement), id: d.id });
+            const item = { ...(d.data() as StockMovement), id: d.id };
+            if (isDemoMovement(item)) {
+              deleteDoc(doc(db, 'users', userId, 'movements', d.id)).catch(() => {});
+            } else {
+              remoteMovements.push(item);
+            }
           });
 
           remoteMovements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
           this.onRemoteUpdateCallback((prev) => {
-            if (remoteMovements.length === 0 && prev.movements && prev.movements.length > 0) {
-              this.syncLocalMovementsIfCloudEmpty(userId, prev.movements);
-              return prev;
+            const cleanPrevMovements = (prev.movements || []).filter((m) => !isDemoMovement(m));
+            if (remoteMovements.length === 0 && cleanPrevMovements.length > 0) {
+              this.syncLocalMovementsIfCloudEmpty(userId, cleanPrevMovements);
+              return { ...prev, movements: cleanPrevMovements };
             }
 
             const remoteIds = new Set(remoteMovements.map((m) => m.id));
-            const pendingLocal = prev.movements.filter(
+            const pendingLocal = cleanPrevMovements.filter(
               (m) => !remoteIds.has(m.id) && isRecentlyCreated(m.createdAt)
             );
 
@@ -913,7 +1027,12 @@ export class FirestoreSyncService {
         if (this.onRemoteUpdateCallback) {
           const remoteRequests: RestockRequest[] = [];
           snap.forEach((d) => {
-            remoteRequests.push({ ...(d.data() as RestockRequest), id: d.id });
+            const item = { ...(d.data() as RestockRequest), id: d.id };
+            if (isDemoRestockRequest(item)) {
+              deleteDoc(doc(db, 'users', userId, 'restockRequests', d.id)).catch(() => {});
+            } else {
+              remoteRequests.push(item);
+            }
           });
 
           remoteRequests.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -956,13 +1075,12 @@ export class FirestoreSyncService {
 
   // --- Auto-upload helpers for unmigrated local collections ---
   private async syncLocalClientsIfCloudEmpty(userId: string, clients: Client[]) {
-    if (!clients || clients.length === 0) return;
-    // Guard: Never auto-sync demo clients to user cloud storage
-    if (clients.some((c) => c.id === 'cli-1' || c.name === 'Amadou Diallo')) return;
+    const cleanClients = (clients || []).filter((c) => !isDemoClient(c));
+    if (cleanClients.length === 0) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
-      for (const client of clients) {
+      for (const client of cleanClients) {
         const ref = doc(db, 'users', userId, 'clients', client.id);
         batch.set(ref, sanitizeForFirestore({
           ...client,
@@ -977,20 +1095,19 @@ export class FirestoreSyncService {
         }
       }
       if (count > 0) await batch.commit();
-      console.log(`[FirestoreSync] Preserved and synced ${clients.length} clients to Firestore.`);
+      console.log(`[FirestoreSync] Preserved and synced ${cleanClients.length} clients to Firestore.`);
     } catch (e) {
       console.warn('[FirestoreSync] Failed to sync local clients:', e);
     }
   }
 
   private async syncLocalProductsIfCloudEmpty(userId: string, products: Product[]) {
-    if (!products || products.length === 0) return;
-    // Guard: Never auto-sync demo products to user cloud storage
-    if (products.some((p) => p.id === 'prod-chg-1' || p.name === 'Chargeur Rapide 33W Type-C')) return;
+    const cleanProducts = (products || []).filter((p) => !isDemoProduct(p));
+    if (cleanProducts.length === 0) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
-      for (const product of products) {
+      for (const product of cleanProducts) {
         const ref = doc(db, 'users', userId, 'products', product.id);
         batch.set(ref, sanitizeForFirestore({
           ...product,
@@ -1011,13 +1128,12 @@ export class FirestoreSyncService {
   }
 
   private async syncLocalInvoicesIfCloudEmpty(userId: string, invoices: Invoice[]) {
-    if (!invoices || invoices.length === 0) return;
-    // Guard: Never auto-sync demo invoices to user cloud storage
-    if (invoices.some((i) => i.id === 'inv-1001' || i.number === 'FAC-2026-1001')) return;
+    const cleanInvoices = (invoices || []).filter((i) => !isDemoInvoice(i));
+    if (cleanInvoices.length === 0) return;
     try {
       let batch = writeBatch(db);
       let count = 0;
-      for (const inv of invoices) {
+      for (const inv of cleanInvoices) {
         const ref = doc(db, 'users', userId, 'invoices', inv.id);
         batch.set(ref, sanitizeForFirestore({
           ...inv,
@@ -1038,7 +1154,8 @@ export class FirestoreSyncService {
   }
 
   private async syncLocalQuotesIfCloudEmpty(userId: string, quotes: Quote[]) {
-    if (!quotes || quotes.length === 0) return;
+    const cleanQuotes = (quotes || []).filter((q) => !isDemoQuote(q));
+    if (cleanQuotes.length === 0) return;
     try {
       let batch = writeBatch(db);
       let count = 0;

@@ -30,6 +30,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { defaultSettings, getDemoState, initialEmptyState } from '../data/demoData';
 import { isUserOnboarded, markUserOnboardedLocally } from '../utils/onboardingUtils';
 import { isDemoSettings, cleanCompanySettings, hasCustomUserSettings } from '../utils/settingsUtils';
+import { purgeDemoFromState } from '../utils/demoFilter';
 import {
   calculateLineTotal,
   calculateSubtotal,
