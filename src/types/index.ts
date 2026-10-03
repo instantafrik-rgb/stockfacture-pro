@@ -62,6 +62,7 @@ export interface CompanySettings {
   dailyReportTime?: string; // default: "20:00"
   lastBackupDate?: string; // ISO string of last completed backup
   lastBackupType?: 'cloud' | 'json' | 'local';
+  updatedAt?: string;
 }
 
 export interface BackupMetadata {

@@ -9,20 +9,44 @@ const DB_VERSION = 1;
 const STORE_NAME = 'app_state';
 const DEFAULT_STATE_KEY = 'state_guest';
 const DEFAULT_LOCAL_STORAGE_KEY = 'stockfacture_data_guest';
+const CURRENT_UID_KEY = 'stockfacture_current_uid';
 
 class StorageService {
   private dbPromise: Promise<IDBDatabase | null> | null = null;
   private currentUserId: string | null = null;
 
   constructor() {
+    if (typeof window !== 'undefined') {
+      try {
+        const storedUid = localStorage.getItem(CURRENT_UID_KEY);
+        if (storedUid && storedUid.trim()) {
+          this.currentUserId = storedUid.trim();
+        }
+      } catch (e) {
+        console.warn('StorageService UID retrieval warning:', e);
+      }
+    }
     this.initIndexedDB();
   }
 
   /**
-   * Set user scope for isolation between Google accounts
+   * Set user scope for isolation between Google accounts.
+   * Persists the active UID to localStorage so reloads/reopens are immediately user-scoped.
    */
   setUserScope(userId: string | null): void {
-    this.currentUserId = userId || null;
+    const trimmed = userId ? userId.trim() : null;
+    this.currentUserId = trimmed;
+    if (typeof window !== 'undefined') {
+      try {
+        if (trimmed) {
+          localStorage.setItem(CURRENT_UID_KEY, trimmed);
+        } else {
+          localStorage.removeItem(CURRENT_UID_KEY);
+        }
+      } catch (e) {
+        console.warn('StorageService setUserScope storage warning:', e);
+      }
+    }
   }
 
   getUserScope(): string | null {

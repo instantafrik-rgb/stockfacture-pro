@@ -52,6 +52,7 @@ import {
 } from '../../types';
 import { SyncStatus } from './types';
 import { markUserOnboardedLocally } from '../../utils/onboardingUtils';
+import { isDemoSettings, hasCustomUserSettings, cleanCompanySettings } from '../../utils/settingsUtils';
 
 /**
  * Central utility to recursively sanitize objects before writing to Firestore.
@@ -312,8 +313,13 @@ export class FirestoreSyncService {
 
       // 1. Settings
       if (localState.settings) {
+        // Never migrate demo settings into an authenticated user's account
+        const settingsToMigrate = isDemoSettings(localState.settings)
+          ? cleanCompanySettings(localState.settings)
+          : localState.settings;
+
         const sanitizedSettings = sanitizeForFirestore({
-          ...localState.settings,
+          ...settingsToMigrate,
           updatedAt: new Date().toISOString(),
         });
         await setDoc(doc(db, 'users', userId, 'settings', 'company'), sanitizedSettings);
@@ -499,18 +505,62 @@ export class FirestoreSyncService {
     const unsubSettings = onSnapshot(
       settingsRef,
       (snap) => {
-        if (snap.exists() && this.onRemoteUpdateCallback) {
-          const cloudSettings = snap.data() as CompanySettings;
-          markUserOnboardedLocally(userId);
-          this.onRemoteUpdateCallback((prev) => ({
-            ...prev,
-            hasCompletedOnboarding: true,
-            settings: {
-              ...prev.settings,
-              ...cloudSettings,
-              hasCompletedOnboarding: true,
-            },
-          }));
+        if (this.onRemoteUpdateCallback) {
+          if (snap.exists()) {
+            const cloudSettings = snap.data() as CompanySettings;
+            markUserOnboardedLocally(userId);
+            this.onRemoteUpdateCallback((prev) => {
+              // Guard: If cloud contains demo store settings, never let them contaminate or overwrite real user settings
+              if (isDemoSettings(cloudSettings)) {
+                if (hasCustomUserSettings(prev.settings)) {
+                  // User has legitimate local settings, re-sync them to repair cloud document
+                  this.syncSettings(prev.settings).catch(() => {});
+                  return prev;
+                }
+                const cleaned = cleanCompanySettings(cloudSettings);
+                return {
+                  ...prev,
+                  settings: cleaned,
+                };
+              }
+
+              // Check if local settings were modified more recently than this incoming snapshot
+              const localTime = prev.settings?.updatedAt ? new Date(prev.settings.updatedAt).getTime() : 0;
+              const cloudTime = cloudSettings.updatedAt ? new Date(cloudSettings.updatedAt).getTime() : 0;
+              if (
+                hasCustomUserSettings(prev.settings) &&
+                localTime > cloudTime &&
+                !isNaN(localTime) &&
+                !isNaN(cloudTime)
+              ) {
+                // Local settings are strictly newer (e.g. pending local change); do not overwrite with older snapshot
+                this.syncSettings(prev.settings).catch(() => {});
+                return prev;
+              }
+
+              // Legitimate cloud settings: merge with current settings (cloud is authoritative)
+              const mergedSettings: CompanySettings = {
+                ...prev.settings,
+                ...cloudSettings,
+                hasCompletedOnboarding: true,
+              };
+
+              return {
+                ...prev,
+                hasCompletedOnboarding: true,
+                settings: mergedSettings,
+              };
+            });
+          } else {
+            // Snapshot does NOT exist in Firestore yet:
+            // If local state already has custom user settings, proactively sync them up to initialize cloud
+            this.onRemoteUpdateCallback((prev) => {
+              if (hasCustomUserSettings(prev.settings)) {
+                this.syncSettings(prev.settings).catch(() => {});
+              }
+              return prev;
+            });
+          }
         }
         this.markCollectionHealthy('settings');
       },
@@ -1163,14 +1213,17 @@ export class FirestoreSyncService {
 
       // 1. Settings
       if (JSON.stringify(prev.settings) !== JSON.stringify(next.settings)) {
-        const ref = doc(db, 'users', user.uid, 'settings', 'company');
-        const sanitizedSettings = sanitizeForFirestore({
-          ...next.settings,
-          updatedAt: new Date().toISOString(),
-        });
-        batch.set(ref, sanitizedSettings, { merge: true });
-        opCount++;
-        await commitAndResetIfNeeded();
+        // Guard: Never push demo settings to user Firestore account
+        if (!isDemoSettings(next.settings) || hasCustomUserSettings(next.settings)) {
+          const ref = doc(db, 'users', user.uid, 'settings', 'company');
+          const sanitizedSettings = sanitizeForFirestore({
+            ...next.settings,
+            updatedAt: new Date().toISOString(),
+          });
+          batch.set(ref, sanitizedSettings, { merge: true });
+          opCount++;
+          await commitAndResetIfNeeded();
+        }
       }
 
       // 2. Products (Added / Updated)
@@ -1543,6 +1596,11 @@ export class FirestoreSyncService {
   public async syncSettings(settings: CompanySettings): Promise<void> {
     const user = auth.currentUser;
     if (!user) return;
+    // Guard: Never push pure demo settings to cloud
+    if (isDemoSettings(settings) && !hasCustomUserSettings(settings)) {
+      console.warn('[FirestoreSync] syncSettings rejected demo settings sync to cloud');
+      return;
+    }
     try {
       const ref = doc(db, 'users', user.uid, 'settings', 'company');
       await setDoc(ref, sanitizeForFirestore({

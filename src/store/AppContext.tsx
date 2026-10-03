@@ -25,9 +25,11 @@ import {
   SaleReturn,
 } from '../types';
 import { dataRepository, firestoreSyncService } from '../services/data';
-import { auth } from '../services/firebase';
-import { getDemoState, initialEmptyState } from '../data/demoData';
+import { auth, db } from '../services/firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { defaultSettings, getDemoState, initialEmptyState } from '../data/demoData';
 import { isUserOnboarded, markUserOnboardedLocally } from '../utils/onboardingUtils';
+import { isDemoSettings, cleanCompanySettings, hasCustomUserSettings } from '../utils/settingsUtils';
 import {
   calculateLineTotal,
   calculateSubtotal,
@@ -239,13 +241,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (!loaded.settings?.theme || loaded.settings.theme === 'dark') {
             loaded.settings = { ...loaded.settings, theme: 'light' };
           }
+          // Clean settings from any demo residue
+          const cleanedSettings = cleanCompanySettings(loaded.settings);
+
           // If PIN is enabled, lock upon startup
-          const shouldLock = Boolean(loaded.settings?.pinEnabled && loaded.settings?.pinCode);
+          const shouldLock = Boolean(cleanedSettings.pinEnabled && cleanedSettings.pinCode);
           const currentUserUid = auth.currentUser?.uid;
           const hasOnboardingDone =
             isUserOnboarded(currentUserUid, loaded) ||
             Boolean(loaded.hasCompletedOnboarding) ||
-            Boolean(loaded.settings?.hasCompletedOnboarding);
+            Boolean(cleanedSettings.hasCompletedOnboarding);
 
           if (hasOnboardingDone) {
             markUserOnboardedLocally(currentUserUid);
@@ -258,7 +263,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             isLocked: shouldLock,
             hasCompletedOnboarding: hasOnboardingDone,
             settings: {
-              ...loaded.settings,
+              ...cleanedSettings,
               hasCompletedOnboarding: hasOnboardingDone,
             },
           };
@@ -299,12 +304,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           markUserOnboardedLocally(currentUserUid);
         }
 
+        const cleanSettings = cleanCompanySettings(next.settings, prev.settings);
         const resolvedNext: AppState = {
           ...next,
           hasCompletedOnboarding: isCompleted,
           settings: {
-            ...next.settings,
-            hasCompletedOnboarding: isCompleted ? true : next.settings?.hasCompletedOnboarding,
+            ...cleanSettings,
+            hasCompletedOnboarding: isCompleted ? true : cleanSettings.hasCompletedOnboarding,
           },
         };
 
@@ -390,15 +396,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Settings
   const updateSettings = useCallback(
     async (newSettings: Partial<CompanySettings>) => {
-      const updatedSettings = { ...state.settings, ...newSettings };
+      const nowIso = new Date().toISOString();
+      const updatedSettings = cleanCompanySettings({
+        ...state.settings,
+        ...newSettings,
+        updatedAt: nowIso,
+      });
       const updated: AppState = {
         ...state,
         settings: updatedSettings,
       };
-      await persistState(updated);
-      firestoreSyncService.syncSettings(updatedSettings).catch(() => {});
+      stateRef.current = updated;
+      setState(updated);
+      await dataRepository.saveFullState(updated);
+      await firestoreSyncService.syncSettings(updatedSettings).catch((err) => {
+        console.warn('Failed to sync updated settings to Firestore:', err);
+      });
     },
-    [state, persistState]
+    [state]
   );
 
   // Products CRUD
@@ -1966,35 +1981,99 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hasCompletedCloud = await firestoreSyncService.hasCloudData(userId);
       }
 
-      const isCompleted = hasCompletedLocally || hasCompletedCloud;
+      // 1. Fetch definitive company settings from Firestore (authoritative source of truth)
+      let authoritativeSettings: CompanySettings | null = null;
+      if (userId) {
+        try {
+          const settingsSnap = await getDoc(doc(db, 'users', userId, 'settings', 'company'));
+          if (settingsSnap.exists()) {
+            const cloudData = settingsSnap.data() as CompanySettings;
+            if (!isDemoSettings(cloudData) || !hasCustomUserSettings(cached?.settings)) {
+              authoritativeSettings = cleanCompanySettings(cloudData, cached?.settings);
+            }
+          }
+        } catch (err) {
+          console.warn('Direct Firestore settings fetch warning:', err);
+        }
+      }
+
+      // 2. Resolve final settings: Prioritize newer timestamp when comparing local vs cloud
+      const localUpdatedTime = cached?.settings?.updatedAt
+        ? new Date(cached.settings.updatedAt).getTime()
+        : 0;
+      const cloudUpdatedTime = authoritativeSettings?.updatedAt
+        ? new Date(authoritativeSettings.updatedAt).getTime()
+        : 0;
+
+      const isLocalMoreRecent =
+        hasCustomUserSettings(cached?.settings) &&
+        localUpdatedTime > cloudUpdatedTime &&
+        !isNaN(localUpdatedTime);
+
+      let resolvedSettings: CompanySettings;
+      if (isLocalMoreRecent && cached?.settings) {
+        // Local settings were modified more recently (e.g. just before app reload): preserve local and sync to cloud
+        resolvedSettings = cleanCompanySettings(cached.settings);
+        if (userId) {
+          firestoreSyncService.syncSettings(resolvedSettings).catch(() => {});
+        }
+      } else if (authoritativeSettings && hasCustomUserSettings(authoritativeSettings)) {
+        resolvedSettings = authoritativeSettings;
+      } else if (cached?.settings && hasCustomUserSettings(cached.settings)) {
+        resolvedSettings = cleanCompanySettings(cached.settings);
+        // Ensure Firestore gets initialized with these user settings if it lacked them
+        if (userId) {
+          firestoreSyncService.syncSettings(resolvedSettings).catch(() => {});
+        }
+      } else if (authoritativeSettings) {
+        resolvedSettings = authoritativeSettings;
+      } else if (cached?.settings) {
+        resolvedSettings = cleanCompanySettings(cached.settings);
+      } else {
+        resolvedSettings = { ...defaultSettings };
+      }
+
+      const isCompleted =
+        hasCompletedLocally ||
+        hasCompletedCloud ||
+        Boolean(resolvedSettings.hasCompletedOnboarding);
+
       if (isCompleted) {
         markUserOnboardedLocally(userId);
       }
 
-      if (cached && (cached.products?.length || cached.invoices?.length || cached.settings?.name)) {
+      resolvedSettings = {
+        ...resolvedSettings,
+        hasCompletedOnboarding: isCompleted ? true : resolvedSettings.hasCompletedOnboarding,
+      };
+
+      if (
+        cached &&
+        (cached.products?.length ||
+          cached.invoices?.length ||
+          cached.clients?.length ||
+          hasCustomUserSettings(resolvedSettings))
+      ) {
         const normalizedCached: AppState = {
           ...cached,
           restockRequests: Array.isArray(cached.restockRequests) ? cached.restockRequests : [],
           returns: Array.isArray(cached.returns) ? cached.returns : [],
-          hasCompletedOnboarding: isCompleted || Boolean(cached.hasCompletedOnboarding),
-          settings: {
-            ...cached.settings,
-            hasCompletedOnboarding: isCompleted || Boolean(cached.settings?.hasCompletedOnboarding),
-          },
+          hasCompletedOnboarding: isCompleted,
+          settings: resolvedSettings,
         };
         stateRef.current = normalizedCached;
         setState(normalizedCached);
+        // Persist immediately to the active user cache
+        dataRepository.saveFullState(normalizedCached);
       } else {
         const readyState: AppState = {
           ...initialEmptyState,
           hasCompletedOnboarding: isCompleted,
-          settings: {
-            ...initialEmptyState.settings,
-            hasCompletedOnboarding: isCompleted ? true : undefined,
-          },
+          settings: resolvedSettings,
         };
         stateRef.current = readyState;
         setState(readyState);
+        dataRepository.saveFullState(readyState);
       }
     } catch (e) {
       console.error('Failed to reload state for user:', e);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   Receipt,
@@ -60,6 +60,28 @@ export const SettingsPage: React.FC = () => {
   const [invoiceFooterNote, setInvoiceFooterNote] = useState(state.settings.invoiceFooterNote);
   const [allowNegativeStock, setAllowNegativeStock] = useState(state.settings.allowNegativeStock);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(state.settings.theme || 'light');
+
+  // Keep form inputs synced when settings load from cache or Firestore
+  useEffect(() => {
+    if (state.settings) {
+      setName(state.settings.name || '');
+      setPhone(state.settings.phone || '');
+      setEmail(state.settings.email || '');
+      setAddress(state.settings.address || '');
+      setWebsite(state.settings.website || '');
+      setTaxId(state.settings.taxId || '');
+      setCurrency(state.settings.currency || 'FCFA');
+      setCurrencyPosition(state.settings.currencyPosition || 'after');
+      setInvoicePrefix(state.settings.invoicePrefix || 'FAC-2026-');
+      setQuotePrefix(state.settings.quotePrefix || 'DEV-2026-');
+      setVatEnabled(Boolean(state.settings.vatEnabled));
+      setVatRate(state.settings.vatRate ?? 18);
+      setPaymentTerms(state.settings.paymentTerms || '');
+      setInvoiceFooterNote(state.settings.invoiceFooterNote || 'Merci pour votre confiance !');
+      setAllowNegativeStock(Boolean(state.settings.allowNegativeStock));
+      setTheme(state.settings.theme || 'light');
+    }
+  }, [state.settings]);
 
   // PIN settings
   const [pinInput, setPinInput] = useState('');
