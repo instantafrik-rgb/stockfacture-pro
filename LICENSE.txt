@@ -1,0 +1,106 @@
+LICENCE PROPRIÉTAIRE - STOCKFACTURE PRO
+Copyright (c) 2026 InstantAfrik. Tous droits réservés.
+
+====================================================================
+1. PROPRIÉTÉ
+====================================================================
+
+Le logiciel StockFacture Pro (ci-après « le Logiciel »), incluant
+l'ensemble de son code source, de sa documentation, de ses ressources
+graphiques et de ses fichiers associés, est la propriété exclusive
+d'InstantAfrik (ci-après « l'Éditeur »).
+
+Le Logiciel est protégé par les lois nationales et internationales
+relatives au droit d'auteur et à la propriété intellectuelle.
+
+====================================================================
+2. OCTROI DE LICENCE
+====================================================================
+
+Sous réserve du paiement des droits applicables et de l'obtention
+d'une autorisation écrite préalable de l'Éditeur, une licence
+d'utilisation non exclusive et non transférable peut être accordée
+au Client, dans les limites définies par le contrat de licence
+correspondant.
+
+Sans autorisation écrite préalable de l'Éditeur, il est strictement
+interdit de :
+
+  a) Copier, reproduire, distribuer ou diffuser le Logiciel, en
+     tout ou en partie, sous quelque forme que ce soit ;
+
+  b) Modifier, adapter, traduire, décompiler, désassembler ou
+     procéder à l'ingénierie inverse du Logiciel ;
+
+  c) Revendre, louer, prêter, céder ou transférer le Logiciel à
+     un tiers, à titre gratuit ou onéreux ;
+
+  d) Utiliser le Logiciel pour créer un produit dérivé ou
+     concurrent ;
+
+  e) Supprimer ou modifier les mentions de copyright, de marque
+     ou de propriété figurant dans le Logiciel.
+
+====================================================================
+3. UTILISATION AUTORISÉE
+====================================================================
+
+Toute utilisation du Logiciel en dehors du cadre expressément
+autorisé par l'Éditeur constitue une violation de la présente
+licence et pourra faire l'objet de poursuites civiles et/ou pénales.
+
+====================================================================
+4. GARANTIE
+====================================================================
+
+Le Logiciel est fourni « en l'état », sans garantie d'aucune sorte,
+expresse ou implicite, y compris, mais sans s'y limiter, les
+garanties de qualité marchande, d'adéquation à un usage particulier
+et d'absence de contrefaçon.
+
+L'Éditeur ne garantit pas que le Logiciel fonctionnera sans
+interruption ni erreur, ni que tous les défauts seront corrigés.
+
+====================================================================
+5. LIMITATION DE RESPONSABILITÉ
+====================================================================
+
+En aucun cas l'Éditeur ne pourra être tenu responsable de tout
+dommage direct, indirect, accessoire, spécial ou consécutif
+(notamment perte de données, perte de chiffre d'affaires, perte
+d'exploitation) résultant de l'utilisation ou de l'impossibilité
+d'utiliser le Logiciel, même si l'Éditeur a été informé de la
+possibilité de tels dommages.
+
+====================================================================
+6. LICENCE COMMERCIALE
+====================================================================
+
+Pour toute demande de licence commerciale (utilisation en
+entreprise, revente, intégration dans un produit tiers, marque
+blanche, etc.), veuillez contacter l'Éditeur :
+
+  Dépôt : https://github.com/instantafrik-rgb/stockfacture-pro
+  Démo  : https://instantafrik-rgb.github.io/stockfacture-pro/
+
+====================================================================
+7. DROIT APPLICABLE
+====================================================================
+
+La présente licence est régie par le droit togolais. Tout litige
+relatif à son interprétation ou à son exécution relève de la
+compétence exclusive des tribunaux de Lomé (Togo).
+
+====================================================================
+8. ACCEPTATION
+====================================================================
+
+L'utilisation, la copie ou la distribution du Logiciel implique
+l'acceptation pleine et entière des termes de la présente licence.
+
+Si vous n'acceptez pas ces termes, vous devez cesser immédiatement
+toute utilisation du Logiciel et le supprimer de tous vos supports.
+
+====================================================================
+© 2026 InstantAfrik - Tous droits réservés.
+====================================================================

@@ -1,0 +1,343 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // FONCTIONS UTILITAIRES
+    // ============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Vérifie qu'un champ existe et est d'un type donné
+    function hasType(field, type) {
+      return field is type;
+    }
+
+    // Vérifie que le document n'existe pas déjà (création uniquement)
+    function isCreate() {
+      return !exists(/databases/$(database)/documents/$(request.path));
+    }
+
+    // Vérifie que le document existe déjà (mise à jour uniquement)
+    function isUpdate() {
+      return exists(/databases/$(database)/documents/$(request.path));
+    }
+
+    // Champs immuables : ne peuvent jamais être modifiés après création
+    function immutableFieldsUnchanged() {
+      return request.resource.data.id == resource.data.id
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    // Soft delete : la seule mise à jour autorisée pour "supprimer" un document
+    function isSoftDelete() {
+      return request.resource.data._deleted == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['_deleted', 'updatedAt']);
+    }
+
+    // Interdit la suppression physique
+    function noHardDelete() {
+      return false;
+    }
+
+    // Validation d'un montant >= 0
+    function isNonNegativeNumber(field) {
+      return field is number && field >= 0;
+    }
+
+    // Validation d'un montant (positif ou négatif, pour paiements)
+    function isNumber(field) {
+      return field is number;
+    }
+
+    // ============================================================
+    // COLLECTION RACINE : users/{userId}
+    // ============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+      allow delete: if noHardDelete();
+
+      // ------------------------------------------------------------
+      // SETTINGS (company + onboarding)
+      // ------------------------------------------------------------
+      match /settings/{settingId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.updatedAt is string;
+
+        allow update: if isOwner(userId)
+          // Interdit la modification de createdAt si présent
+          && (
+            !('createdAt' in resource.data)
+            || request.resource.data.createdAt == resource.data.createdAt
+          )
+          // nextInvoiceNumber / nextQuoteNumber ne peuvent QUE augmenter (jamais reculer)
+          && (
+            !('nextInvoiceNumber' in resource.data)
+            || !('nextInvoiceNumber' in request.resource.data)
+            || request.resource.data.nextInvoiceNumber >= resource.data.nextInvoiceNumber
+          )
+          && (
+            !('nextQuoteNumber' in resource.data)
+            || !('nextQuoteNumber' in request.resource.data)
+            || request.resource.data.nextQuoteNumber >= resource.data.nextQuoteNumber
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // PRODUCTS
+      // ------------------------------------------------------------
+      match /products/{productId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.name is string
+          && request.resource.data.createdAt is string
+          && request.resource.data.updatedAt is string
+          && isNonNegativeNumber(request.resource.data.purchasePrice)
+          && isNonNegativeNumber(request.resource.data.sellingPrice)
+          && isNumber(request.resource.data.stockQuantity)
+          && isNonNegativeNumber(request.resource.data.minStockAlert);
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            // Mise à jour normale OU soft delete
+            (
+              request.resource.data.name is string
+              && isNonNegativeNumber(request.resource.data.purchasePrice)
+              && isNonNegativeNumber(request.resource.data.sellingPrice)
+              && isNumber(request.resource.data.stockQuantity)
+            )
+            || isSoftDelete()
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // CATEGORIES
+      // ------------------------------------------------------------
+      match /categories/{categoryId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.name is string;
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            request.resource.data.name is string
+            || isSoftDelete()
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // STOCK MOVEMENTS (immuables une fois créés)
+      // ------------------------------------------------------------
+      match /movements/{movementId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.productId is string
+          && request.resource.data.type in ['in', 'out', 'adjustment']
+          && isNonNegativeNumber(request.resource.data.quantity)
+          && isNumber(request.resource.data.previousStock)
+          && isNumber(request.resource.data.newStock)
+          && request.resource.data.createdAt is string;
+
+        // Aucune modification autorisée sur les mouvements de stock
+        allow update: if false;
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // CLIENTS
+      // ------------------------------------------------------------
+      match /clients/{clientId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.name is string
+          && request.resource.data.createdAt is string;
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            request.resource.data.name is string
+            || isSoftDelete()
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // INVOICES (factures — immuables sur les montants)
+      // ------------------------------------------------------------
+      match /invoices/{invoiceId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.number is string
+          && request.resource.data.clientName is string
+          && request.resource.data.createdAt is string
+          && request.resource.data.updatedAt is string
+          // Cohérence des montants
+          && isNonNegativeNumber(request.resource.data.subtotal)
+          && isNonNegativeNumber(request.resource.data.discountTotal)
+          && isNonNegativeNumber(request.resource.data.vatAmount)
+          && isNonNegativeNumber(request.resource.data.total)
+          && isNonNegativeNumber(request.resource.data.amountPaid)
+          && isNumber(request.resource.data.remainingAmount)
+          // Vérification mathématique : total = subtotal - discountTotal + vatAmount
+          && request.resource.data.total
+             == request.resource.data.subtotal
+                - request.resource.data.discountTotal
+                + request.resource.data.vatAmount
+          // Statut valide
+          && request.resource.data.status in ['draft', 'unpaid', 'partial', 'paid', 'cancelled'];
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            // Soft delete
+            isSoftDelete()
+            // OU mise à jour contrôlée (paiement, annulation, édition brouillon)
+            || (
+              request.resource.data.number == resource.data.number
+              && request.resource.data.total == resource.data.total
+              && request.resource.data.subtotal == resource.data.subtotal
+              && request.resource.data.createdAt == resource.data.createdAt
+            )
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // QUOTES (devis)
+      // ------------------------------------------------------------
+      match /quotes/{quoteId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.number is string
+          && request.resource.data.createdAt is string
+          && isNonNegativeNumber(request.resource.data.total)
+          && request.resource.data.status in ['draft', 'sent', 'accepted', 'rejected', 'expired', 'converted'];
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            isSoftDelete()
+            || (
+              request.resource.data.number == resource.data.number
+              && request.resource.data.createdAt == resource.data.createdAt
+            )
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // PAYMENTS (paiements — autoriser montants négatifs pour remboursements)
+      // ------------------------------------------------------------
+      match /payments/{paymentId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.invoiceId is string
+          && request.resource.data.invoiceNumber is string
+          && isNumber(request.resource.data.amount)   // ← négatif autorisé (remboursement)
+          && request.resource.data.date is string
+          && request.resource.data.createdAt is string;
+
+        // Un paiement est immuable : on ne modifie jamais un encaissement
+        allow update: if false;
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // CLOSURES (clôtures de caisse — immuables)
+      // ------------------------------------------------------------
+      match /closures/{closureId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.closedAt is string;
+
+        allow update: if false;
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // RESTOCK REQUESTS (clients à relancer)
+      // ------------------------------------------------------------
+      match /restockRequests/{requestId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.status is string;
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && (
+            request.resource.data.status in ['pending', 'contacted', 'available', 'cancelled', 'fulfilled']
+            || isSoftDelete()
+          );
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // RETURNS (retours, avoirs, échanges)
+      // ------------------------------------------------------------
+      match /returns/{returnId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.returnNumber is string
+          && request.resource.data.invoiceId is string
+          && request.resource.data.actionType in ['refund', 'credit_note', 'exchange']
+          && isNonNegativeNumber(request.resource.data.totalReturnedAmount)
+          && request.resource.data.createdAt is string;
+
+        allow update: if isOwner(userId)
+          && immutableFieldsUnchanged()
+          && isSoftDelete();
+
+        allow delete: if noHardDelete();
+      }
+
+      // ------------------------------------------------------------
+      // TOUT AUTRE DOCUMENT SOUS users/{userId}/...
+      // (par défaut : refusé)
+      // ------------------------------------------------------------
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+  }
+}
