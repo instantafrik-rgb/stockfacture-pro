@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './store/AuthContext';
 import { CloudMigrationBanner } from './components/common/CloudMigrationBanner';
 import { PWAUpdateToast } from './components/common/PWAUpdateToast';
 import { AppShell } from './components/layout/AppShell';
+import { LandingPage } from './pages/LandingPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { SalePage } from './pages/SalePage';
 import { ProductsPage } from './pages/ProductsPage';
@@ -19,7 +20,7 @@ import { QuotesPage } from './pages/QuotesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ManualInvoicePage } from './pages/ManualInvoicePage';
-import { Sparkles, ArrowRight, Building2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { notificationService } from './services/notificationService';
 import { isUserOnboarded } from './utils/onboardingUtils';
 
@@ -47,6 +48,11 @@ const MainView: React.FC = () => {
         <p className="text-sm font-bold text-[#64748B]">Chargement de StockFacture Pro...</p>
       </div>
     );
+  }
+
+  // [LANDING] Si l'utilisateur n'est PAS connecté → afficher la landing page marketing
+  if (!user) {
+    return <LandingPage />;
   }
 
   // Lightweight Onboarding modal on first run ONLY for truly brand-new accounts with zero data
