@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
 import { AuthProvider, useAuth } from './store/AuthContext';
+import { ToastProvider, } from './store/ToastContext';
 import { CloudMigrationBanner } from './components/common/CloudMigrationBanner';
 import { PWAUpdateToast } from './components/common/PWAUpdateToast';
 import { AppShell } from './components/layout/AppShell';
@@ -145,7 +146,9 @@ export default function App() {
   return (
     <AppProvider>
       <AuthProvider>
-        <MainView />
+        <ToastProvider>
+          <MainView />
+        </ToastProvider>
       </AuthProvider>
     </AppProvider>
   );

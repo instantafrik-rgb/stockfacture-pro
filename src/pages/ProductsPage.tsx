@@ -25,6 +25,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
+import { useToast } from '../store/ToastContext';
 import { Product, Category } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { StatusBadge } from '../components/common/StatusBadge';
@@ -39,6 +40,7 @@ import { compressImageFile } from '../utils/imageUtils';
 export const ProductsPage: React.FC = () => {
   const { state, addProduct, updateProduct, deleteProduct, selectedItemId, setSelectedItemId } =
     useApp();
+  const toast = useToast();
   const { currency, currencyPosition } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
@@ -198,7 +200,6 @@ export const ProductsPage: React.FC = () => {
   };
 
   const generateRandomBarcode = () => {
-    // Generate valid 13-digit EAN style
     let code = '200' + Math.floor(100000000 + Math.random() * 900000000).toString().slice(0, 9);
     setFormBarcode(code);
   };
@@ -209,11 +210,13 @@ export const ProductsPage: React.FC = () => {
 
     if (!formName.trim()) {
       setFormError('Le nom du produit est obligatoire.');
+      toast.warning('Nom obligatoire', 'Veuillez saisir le nom du produit.');
       return;
     }
 
     if (formSellingPrice < 0 || isNaN(formSellingPrice)) {
       setFormError('Le prix de vente doit être supérieur ou égal à zéro.');
+      toast.warning('Prix invalide', 'Le prix de vente doit être supérieur ou égal à zéro.');
       return;
     }
 
@@ -227,51 +230,64 @@ export const ProductsPage: React.FC = () => {
       );
       if (isDuplicate) {
         setFormError(`La référence SKU "${formSku.trim()}" est déjà utilisée par un autre produit.`);
+        toast.error('SKU en double', `La référence "${formSku.trim()}" est déjà utilisée.`);
         return;
       }
     }
 
-    if (editingProduct) {
-      // Update
-      await updateProduct(editingProduct.id, {
-        name: formName.trim(),
-        sku: formSku.trim() || undefined,
-        barcode: formBarcode.trim() || undefined,
-        categoryId: formCategoryId || undefined,
-        purchasePrice: Math.max(0, formPurchasePrice || 0),
-        sellingPrice: Math.max(0, formSellingPrice || 0),
-        minStockAlert: Math.max(0, formMinStockAlert || 0),
-        unit: formUnit.trim() || 'pièce',
-        description: formDescription.trim() || undefined,
-        imageUrl: formImageUrl.trim() || undefined,
-      });
-    } else {
-      // Create new
-      await addProduct({
-        name: formName.trim(),
-        sku: formSku.trim() || undefined,
-        barcode: formBarcode.trim() || undefined,
-        categoryId: formCategoryId || undefined,
-        purchasePrice: Math.max(0, formPurchasePrice || 0),
-        sellingPrice: Math.max(0, formSellingPrice || 0),
-        stockQuantity: Math.max(0, formStockQuantity || 0),
-        minStockAlert: Math.max(0, formMinStockAlert || 5),
-        unit: formUnit.trim() || 'pièce',
-        description: formDescription.trim() || undefined,
-        imageUrl: formImageUrl.trim() || undefined,
-      });
-    }
+    try {
+      if (editingProduct) {
+        // Update
+        await updateProduct(editingProduct.id, {
+          name: formName.trim(),
+          sku: formSku.trim() || undefined,
+          barcode: formBarcode.trim() || undefined,
+          categoryId: formCategoryId || undefined,
+          purchasePrice: Math.max(0, formPurchasePrice || 0),
+          sellingPrice: Math.max(0, formSellingPrice || 0),
+          minStockAlert: Math.max(0, formMinStockAlert || 0),
+          unit: formUnit.trim() || 'pièce',
+          description: formDescription.trim() || undefined,
+          imageUrl: formImageUrl.trim() || undefined,
+        });
+        toast.success('Produit modifié', `"${formName.trim()}" a été mis à jour.`);
+      } else {
+        // Create new
+        await addProduct({
+          name: formName.trim(),
+          sku: formSku.trim() || undefined,
+          barcode: formBarcode.trim() || undefined,
+          categoryId: formCategoryId || undefined,
+          purchasePrice: Math.max(0, formPurchasePrice || 0),
+          sellingPrice: Math.max(0, formSellingPrice || 0),
+          stockQuantity: Math.max(0, formStockQuantity || 0),
+          minStockAlert: Math.max(0, formMinStockAlert || 5),
+          unit: formUnit.trim() || 'pièce',
+          description: formDescription.trim() || undefined,
+          imageUrl: formImageUrl.trim() || undefined,
+        });
+        toast.success('Produit ajouté', `"${formName.trim()}" a été enregistré.`);
+      }
 
-    setShowAddEditModal(false);
+      setShowAddEditModal(false);
+    } catch (err: any) {
+      toast.error('Erreur', err?.message || "Impossible d'enregistrer le produit.");
+    }
   };
 
   const confirmDelete = async () => {
     if (productToDelete) {
-      await deleteProduct(productToDelete.id);
-      if (selectedItemId === productToDelete.id) {
-        setSelectedItemId(null);
+      const deletedName = productToDelete.name;
+      try {
+        await deleteProduct(productToDelete.id);
+        if (selectedItemId === productToDelete.id) {
+          setSelectedItemId(null);
+        }
+        setProductToDelete(null);
+        toast.success('Produit supprimé', `"${deletedName}" a été retiré du catalogue.`);
+      } catch (err: any) {
+        toast.error('Erreur', err?.message || 'Impossible de supprimer le produit.');
       }
-      setProductToDelete(null);
     }
   };
 
