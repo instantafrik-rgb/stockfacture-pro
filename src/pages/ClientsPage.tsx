@@ -25,6 +25,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
+import { useToast } from '../store/ToastContext';
 import { Client, Invoice } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { pickContactNative } from '../services/contactPicker';
@@ -44,6 +45,7 @@ export const ClientsPage: React.FC = () => {
     selectedItemId,
     setSelectedItemId,
   } = useApp();
+  const toast = useToast();
   const { currency, currencyPosition } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
@@ -217,7 +219,7 @@ export const ClientsPage: React.FC = () => {
       if (contact.phone) setFormPhone(contact.phone);
       if (contact.email) setFormEmail(contact.email);
     } else {
-      alert('Action annulée ou carnet d’adresses non supporté par ce navigateur.');
+      toast.info('Action annulée', 'Le carnet d\'adresses n\'est pas supporté par ce navigateur.');
     }
   };
 
@@ -229,39 +231,52 @@ export const ClientsPage: React.FC = () => {
     const trimmedName = formName.trim();
     if (!trimmedName) {
       setFormError('Le nom du client est obligatoire.');
+      toast.warning('Nom obligatoire', 'Veuillez saisir le nom du client.');
       return;
     }
 
-    if (editingClient) {
-      await updateClient(editingClient.id, {
-        name: trimmedName,
-        phone: formPhone.trim() || undefined,
-        email: formEmail.trim() || undefined,
-        address: formAddress.trim() || undefined,
-        taxId: formTaxId.trim() || undefined,
-        notes: formNotes.trim() || undefined,
-      });
-    } else {
-      await addClient({
-        name: trimmedName,
-        phone: formPhone.trim() || undefined,
-        email: formEmail.trim() || undefined,
-        address: formAddress.trim() || undefined,
-        taxId: formTaxId.trim() || undefined,
-        notes: formNotes.trim() || undefined,
-      });
+    try {
+      if (editingClient) {
+        await updateClient(editingClient.id, {
+          name: trimmedName,
+          phone: formPhone.trim() || undefined,
+          email: formEmail.trim() || undefined,
+          address: formAddress.trim() || undefined,
+          taxId: formTaxId.trim() || undefined,
+          notes: formNotes.trim() || undefined,
+        });
+        toast.success('Client modifié', `"${trimmedName}" a été mis à jour.`);
+      } else {
+        await addClient({
+          name: trimmedName,
+          phone: formPhone.trim() || undefined,
+          email: formEmail.trim() || undefined,
+          address: formAddress.trim() || undefined,
+          taxId: formTaxId.trim() || undefined,
+          notes: formNotes.trim() || undefined,
+        });
+        toast.success('Client ajouté', `"${trimmedName}" a été enregistré.`);
+      }
+      setShowAddEditModal(false);
+    } catch (err: any) {
+      toast.error('Erreur', err?.message || "Impossible d'enregistrer le client.");
     }
-    setShowAddEditModal(false);
   };
 
   // Delete client
   const confirmDelete = async () => {
     if (clientToDelete) {
-      await deleteClient(clientToDelete.id);
-      if (selectedItemId === clientToDelete.id) {
-        setSelectedItemId(null);
+      const deletedName = clientToDelete.name;
+      try {
+        await deleteClient(clientToDelete.id);
+        if (selectedItemId === clientToDelete.id) {
+          setSelectedItemId(null);
+        }
+        setClientToDelete(null);
+        toast.success('Client supprimé', `"${deletedName}" a été retiré de la liste.`);
+      } catch (err: any) {
+        toast.error('Erreur', err?.message || 'Impossible de supprimer le client.');
       }
-      setClientToDelete(null);
     }
   };
 

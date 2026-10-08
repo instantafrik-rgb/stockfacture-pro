@@ -25,6 +25,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
+import { useToast } from '../store/ToastContext';
 import { CartItem, Invoice, PaymentMethod, Product } from '../types';
 import { formatCurrency, formatDate, getTodayDateString } from '../utils/formatters';
 import {
@@ -44,6 +45,7 @@ import { generateInvoicePdf } from '../pdf/documentPdf';
 
 export const SalePage: React.FC = () => {
   const { state, createSale, navigate, selectedItemId } = useApp();
+  const toast = useToast();
   const { currency, currencyPosition, vatEnabled, vatRate, allowNegativeStock } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
@@ -131,7 +133,7 @@ export const SalePage: React.FC = () => {
   // Add catalog product to cart
   const addToCart = (product: Product) => {
     if (!allowNegativeStock && product.stockQuantity <= 0) {
-      alert(`"${product.name}" est en rupture de stock. Le stock négatif est désactivé.`);
+      toast.warning('Rupture de stock', `"${product.name}" n'est plus disponible.`);
       return;
     }
 
@@ -141,7 +143,7 @@ export const SalePage: React.FC = () => {
         const item = prev[existingIndex];
         const nextQty = item.quantity + 1;
         if (!allowNegativeStock && product.stockQuantity < nextQty) {
-          alert(`Stock insuffisant (${product.stockQuantity} disponible).`);
+          toast.warning('Stock insuffisant', `Seulement ${product.stockQuantity} unité(s) disponible(s).`);
           return prev;
         }
         const updated = [...prev];
@@ -171,6 +173,7 @@ export const SalePage: React.FC = () => {
   // Add Free Line (Ligne libre)
   const handleAddFreeLine = (item: CartItem) => {
     setCart((prev) => [...prev, item]);
+    toast.success('Ligne libre ajoutée', `"${item.designation}" a été ajouté au panier.`);
   };
 
   // Update Cart Item quantity
@@ -183,7 +186,7 @@ export const SalePage: React.FC = () => {
       prev.map((it) => {
         if (it.id === itemId) {
           if (!it.isFreeLine && !allowNegativeStock && (it.availableStock ?? 999999) < newQty) {
-            alert(`Stock insuffisant. Maximum disponible : ${it.availableStock}`);
+            toast.warning('Stock insuffisant', `Maximum disponible : ${it.availableStock}`);
             return it;
           }
           return { ...it, quantity: newQty };
@@ -215,6 +218,7 @@ export const SalePage: React.FC = () => {
     setCart([]);
     setIsCartOpen(false);
     setIsCheckoutOpen(false);
+    toast.info('Panier vidé', 'Tous les articles ont été retirés.');
   };
 
   // Contact Picker
@@ -224,8 +228,9 @@ export const SalePage: React.FC = () => {
       setClientType('new');
       setNewClientName(contact.name);
       setNewClientPhone(contact.phone || '');
+      toast.success('Contact importé', `"${contact.name}" a été ajouté.`);
     } else {
-      alert('Impossible d’accéder au carnet d’adresses ou action annulée. Vous pouvez saisir les coordonnées manuellement.');
+      toast.info('Action annulée', 'Le carnet d\'adresses n\'est pas accessible.');
     }
   };
 
@@ -257,11 +262,13 @@ export const SalePage: React.FC = () => {
         };
       } else {
         setErrorMessage('Veuillez sélectionner un client dans la liste.');
+        toast.warning('Client requis', 'Veuillez sélectionner un client.');
         return;
       }
     } else if (clientType === 'new') {
       if (!newClientName.trim()) {
         setErrorMessage('Veuillez saisir le nom du nouveau client.');
+        toast.warning('Nom obligatoire', 'Veuillez saisir le nom du nouveau client.');
         return;
       }
       clientData = {
@@ -274,6 +281,7 @@ export const SalePage: React.FC = () => {
     } else if (clientType === 'manual') {
       if (!newClientName.trim()) {
         setErrorMessage('Veuillez saisir le nom du client.');
+        toast.warning('Nom obligatoire', 'Veuillez saisir le nom du client.');
         return;
       }
       clientData = {
@@ -298,8 +306,11 @@ export const SalePage: React.FC = () => {
       setCompletedInvoice(res.invoice);
       setIsCheckoutOpen(false);
       setCart([]);
+      toast.success('Vente enregistrée', `Facture ${res.invoice.number} créée avec succès.`);
     } else {
-      setErrorMessage(res.error || 'Erreur lors de la validation de la vente.');
+      const errMsg = res.error || 'Erreur lors de la validation de la vente.';
+      setErrorMessage(errMsg);
+      toast.error('Erreur', errMsg);
     }
   };
 

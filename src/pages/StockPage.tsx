@@ -21,6 +21,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
+import { useToast } from '../store/ToastContext';
 import { StockMovement, StockMovementType, StockMovementReason } from '../types';
 import { formatCurrency, formatDateTime, getStockReasonLabel, getTodayDateString } from '../utils/formatters';
 import { calculateStockValue } from '../utils/calculations';
@@ -32,6 +33,7 @@ type PeriodFilterKey = 'all' | 'today' | 'week' | 'month' | 'custom';
 
 export const StockPage: React.FC = () => {
   const { state, navigate } = useApp();
+  const toast = useToast();
   const { currency, currencyPosition } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
@@ -161,6 +163,7 @@ export const StockPage: React.FC = () => {
     setPeriodFilter('all');
     setCustomStartDate('');
     setCustomEndDate('');
+    toast.info('Filtres réinitialisés', 'Tous les filtres ont été remis à zéro.');
   };
 
   const isFiltered =

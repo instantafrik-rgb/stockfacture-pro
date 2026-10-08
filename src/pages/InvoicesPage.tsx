@@ -26,6 +26,7 @@ import {
   Package,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
+import { useToast } from '../store/ToastContext';
 import { Invoice, InvoiceStatus, PaymentMethod } from '../types';
 import { formatCurrency, formatDate, getPaymentMethodLabel } from '../utils/formatters';
 import { StatCard } from '../components/ui/StatCard';
@@ -41,6 +42,7 @@ type StatusFilterKey = 'all' | 'paid' | 'partial' | 'unpaid' | 'cancelled' | 're
 
 export const InvoicesPage: React.FC = () => {
   const { state, navigate, selectedItemId, setSelectedItemId, cancelInvoice, updateInvoice } = useApp();
+  const toast = useToast();
   const { currency, currencyPosition } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
@@ -141,8 +143,14 @@ export const InvoicesPage: React.FC = () => {
 
   const handleCancelConfirm = async () => {
     if (invoiceToCancel) {
-      await cancelInvoice(invoiceToCancel.id);
-      setInvoiceToCancel(null);
+      const invNumber = invoiceToCancel.number;
+      try {
+        await cancelInvoice(invoiceToCancel.id);
+        setInvoiceToCancel(null);
+        toast.success('Facture annulée', `La facture #${invNumber} a été annulée et le stock réintégré.`);
+      } catch (err: any) {
+        toast.error('Erreur', err?.message || "Impossible d'annuler la facture.");
+      }
     }
   };
 
@@ -157,13 +165,19 @@ export const InvoicesPage: React.FC = () => {
   const handleSaveInvoiceEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingInvoice) return;
-    await updateInvoice(editingInvoice.id, {
-      dueDate: editDueDate || editingInvoice.date,
-      clientPhone: editClientPhone.trim() || undefined,
-      clientAddress: editClientAddress.trim() || undefined,
-      notes: editNotes.trim() || undefined,
-    });
-    setEditingInvoice(null);
+    try {
+      await updateInvoice(editingInvoice.id, {
+        dueDate: editDueDate || editingInvoice.date,
+        clientPhone: editClientPhone.trim() || undefined,
+        clientAddress: editClientAddress.trim() || undefined,
+        notes: editNotes.trim() || undefined,
+      });
+      const invNumber = editingInvoice.number;
+      setEditingInvoice(null);
+      toast.success('Facture modifiée', `La facture #${invNumber} a été mise à jour.`);
+    } catch (err: any) {
+      toast.error('Erreur', err?.message || 'Impossible de modifier la facture.');
+    }
   };
 
   return (
