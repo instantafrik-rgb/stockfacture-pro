@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useApp, ActiveView } from '../../store/AppContext';
 import { PWAInstallButton } from '../common/PWAInstallButton';
+import { BrandLogo } from '../common/BrandLogo';
 
 export const Sidebar: React.FC = () => {
   const { activeView, navigate, state, lockApp } = useApp();
@@ -51,9 +52,7 @@ export const Sidebar: React.FC = () => {
       {/* Brand Header */}
       <div className="p-5 border-b border-[#E8EDF2] dark:border-[#22304E] flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-md shadow-orange-500/20">
-            <span className="font-extrabold text-lg tracking-tight">SF</span>
-          </div>
+        <BrandLogo size="md" />
           <div className="min-w-0">
             <h1 className="text-base font-extrabold text-[#14213D] dark:text-white leading-tight truncate">
               StockFacture Pro

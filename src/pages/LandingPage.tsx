@@ -22,6 +22,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { signInWithGoogle } from '../services/firebase';
+import { BrandLogo } from '../components/common/BrandLogo';
 
 interface LandingPageProps {
   onSignInSuccess?: () => void;
@@ -89,9 +90,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
               className="flex items-center gap-2.5 cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20">
-                <span className="font-extrabold text-sm">SF</span>
-              </div>
+              <BrandLogo size="md" />
               <div className="text-left">
                 <span className="block font-extrabold text-[#14213D] text-base sm:text-lg leading-tight">
                   StockFacture Pro
@@ -594,9 +593,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-10">
             <div className="col-span-2 md:col-span-1">
               <div className="flex items-center gap-2.5 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center">
-                  <span className="font-extrabold text-sm">SF</span>
-                </div>
+                <BrandLogo size="md" />
                 <span className="font-extrabold text-white">StockFacture Pro</span>
               </div>
               <p className="text-xs leading-relaxed mb-2">
@@ -658,7 +655,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
 
           <div className="pt-8 border-t border-[#1E293B] text-center">
             <p className="text-xs">
-              © 2026 StockFacture Pro — Tous droits réservés. Conçu avec ❤️ pour les commerçants d'Afrique de l'Ouest.
+              © 2026 StockFacture Pro — Tous droits réservés. Conçu avec amour pour les commerces.
             </p>
           </div>
         </div>

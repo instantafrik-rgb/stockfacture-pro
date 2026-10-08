@@ -23,6 +23,7 @@ import { ManualInvoicePage } from './pages/ManualInvoicePage';
 import { Sparkles, ArrowRight } from 'lucide-react';
 import { notificationService } from './services/notificationService';
 import { isUserOnboarded } from './utils/onboardingUtils';
+import { BrandLogo } from './components/common/BrandLogo';
 
 const MainView: React.FC = () => {
   const { activeView, isLoading, state, completeOnboarding, navigate } = useApp();
@@ -42,9 +43,7 @@ const MainView: React.FC = () => {
   if (isLoading || isLoadingAuth) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] text-[#14213D] space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-orange-500 text-white flex items-center justify-center animate-pulse shadow-md shadow-orange-500/20">
-          <span className="font-extrabold text-xl">SF</span>
-        </div>
+        <BrandLogo size="lg" className="animate-pulse" />
         <p className="text-sm font-bold text-[#64748B]">Chargement de StockFacture Pro...</p>
       </div>
     );
@@ -62,8 +61,8 @@ const MainView: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#FAFAF8] p-4">
         <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-xl border border-[#E8EDF2] dark:border-slate-800 space-y-5 animate-in zoom-in-95">
-          <div className="w-14 h-14 rounded-2xl bg-[#FFF2DF] text-[#D97706] border border-[#FFE4BF] flex items-center justify-center shadow-xs mx-auto">
-            <Sparkles className="w-7 h-7" />
+          <div className="flex justify-center">
+            <BrandLogo size="xl" />
           </div>
 
           <div className="text-center space-y-1">
