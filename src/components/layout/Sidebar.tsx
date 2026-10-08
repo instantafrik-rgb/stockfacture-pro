@@ -58,7 +58,10 @@ export const Sidebar: React.FC = () => {
             <h1 className="text-base font-extrabold text-[#14213D] dark:text-white leading-tight truncate">
               StockFacture Pro
             </h1>
-            <p className="text-[11px] text-[#64748B] dark:text-slate-400 truncate max-w-[140px]">
+            <p className="text-[10px] text-orange-600 dark:text-orange-400 font-semibold truncate">
+              Votre gestion, partout, tout le temps.
+            </p>
+            <p className="text-[11px] text-[#64748B] dark:text-slate-400 truncate max-w-[140px] mt-0.5">
               {state.settings.name || 'Commerce'}
             </p>
           </div>
@@ -129,7 +132,7 @@ export const Sidebar: React.FC = () => {
         </button>
 
         <PWAInstallButton />
-        
+
         <div className="text-[10px] text-center text-[#64748B] dark:text-slate-500">
           StockFacture Pro • 100% Hors-Ligne
         </div>

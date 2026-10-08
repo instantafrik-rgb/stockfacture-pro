@@ -92,9 +92,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
               <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20">
                 <span className="font-extrabold text-sm">SF</span>
               </div>
-              <span className="font-extrabold text-[#14213D] text-base sm:text-lg">
-                StockFacture Pro
-              </span>
+              <div className="text-left">
+                <span className="block font-extrabold text-[#14213D] text-base sm:text-lg leading-tight">
+                  StockFacture Pro
+                </span>
+                <span className="hidden sm:block text-[10px] text-[#64748B] font-medium leading-tight">
+                  Votre gestion, partout, tout le temps.
+                </span>
+              </div>
             </button>
 
             {/* Desktop nav */}
@@ -193,7 +198,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
               <p className="text-base sm:text-lg text-[#64748B] max-w-2xl mx-auto lg:mx-0 leading-relaxed">
                 Facturez, suivez votre stock, encaissez —{' '}
                 <strong className="text-[#14213D]">même sans internet</strong>.
-                L'application de gestion pensée pour les commerçants d'Afrique de l'Ouest.
+              </p>
+
+              <p className="text-base sm:text-lg font-bold text-orange-600">
+                Votre gestion, partout, tout le temps.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
@@ -591,7 +599,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onSignInSuccess }) => 
                 </div>
                 <span className="font-extrabold text-white">StockFacture Pro</span>
               </div>
-              <p className="text-xs leading-relaxed">
+              <p className="text-xs leading-relaxed mb-2">
+                Votre gestion, partout, tout le temps.
+              </p>
+              <p className="text-[11px] leading-relaxed text-[#64748B]">
                 La gestion commerciale simple pour les commerçants d'Afrique de l'Ouest.
               </p>
             </div>
