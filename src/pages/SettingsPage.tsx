@@ -361,7 +361,7 @@ export const SettingsPage: React.FC = () => {
                   type="button"
                   onClick={() => setVatEnabled(!vatEnabled)}
                   className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                    vatEnabled ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'
+                    vatEnabled ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-700'
                   }`}
                 >
                   <span

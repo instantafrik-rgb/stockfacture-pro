@@ -334,7 +334,7 @@ export const ProductsPage: React.FC = () => {
           <button
             type="button"
             onClick={openAddModal}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95 min-h-[44px]"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95 min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
             <span>Nouveau Produit</span>
@@ -422,7 +422,7 @@ export const ProductsPage: React.FC = () => {
               placeholder="Rechercher par nom, référence SKU ou code-barres..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 shadow-xs"
+              className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500 shadow-xs"
             />
             {searchQuery && (
               <button
@@ -491,7 +491,7 @@ export const ProductsPage: React.FC = () => {
             onClick={() => setFilterCategory('all')}
             className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
               filterCategory === 'all'
-                ? 'bg-indigo-600 text-white shadow-xs'
+                ? 'bg-orange-500 text-white shadow-xs'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
             }`}
           >
@@ -556,7 +556,7 @@ export const ProductsPage: React.FC = () => {
           <button
             type="button"
             onClick={openAddModal}
-            className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-transform active:scale-95"
+            className="px-4 py-2.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-xs transition-transform active:scale-95"
           >
             + Ajouter un produit
           </button>
@@ -856,7 +856,7 @@ export const ProductsPage: React.FC = () => {
                   placeholder="Ex: Riz Parfumé 5kg, Câble HDMI 2m..."
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
                 />
               </div>
 
@@ -877,7 +877,7 @@ export const ProductsPage: React.FC = () => {
                 <select
                   value={formCategoryId}
                   onChange={(e) => setFormCategoryId(e.target.value)}
-                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
                 >
                   <option value="">-- Sans catégorie --</option>
                   {state.categories.map((c) => (
@@ -1059,7 +1059,7 @@ export const ProductsPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-transform active:scale-95"
+                  className="px-5 py-2.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-transform active:scale-95"
                 >
                   {editingProduct ? 'Enregistrer les modifications' : 'Créer le produit'}
                 </button>

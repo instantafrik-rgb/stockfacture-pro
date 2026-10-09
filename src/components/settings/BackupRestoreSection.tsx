@@ -398,7 +398,7 @@ export const BackupRestoreSection: React.FC<BackupRestoreSectionProps> = () => {
               type="button"
               onClick={handleCreateCloudBackup}
               disabled={isCreatingCloud || !user}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-transform active:scale-95"
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-transform active:scale-95"
             >
               {isCreatingCloud ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />

@@ -91,11 +91,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               placeholder="Code-barres ou référence SKU..."
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
-              className="w-full h-12 pl-4 pr-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full h-12 pl-4 pr-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
             />
             <button
               type="submit"
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg bg-orange-500 text-white hover:bg-orange-600"
             >
               <Search className="w-4 h-4" />
             </button>

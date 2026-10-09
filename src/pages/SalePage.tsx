@@ -1291,7 +1291,7 @@ export const SalePage: React.FC = () => {
                   placeholder="Rechercher par n° de facture, client, téléphone..."
                   value={returnSearchQuery}
                   onChange={(e) => setReturnSearchQuery(e.target.value)}
-                  className="w-full h-10 pl-10 pr-8 rounded-xl border border-[#E8EDF2] dark:border-[#22304E] bg-white dark:bg-slate-900 text-xs text-[#14213D] dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-10 pl-10 pr-8 rounded-xl border border-[#E8EDF2] dark:border-[#22304E] bg-white dark:bg-slate-900 text-xs text-[#14213D] dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-orange-500"
                 />
                 {returnSearchQuery && (
                   <button
@@ -1344,7 +1344,7 @@ export const SalePage: React.FC = () => {
 
                     <button
                       type="button"
-                      className="px-3 py-1.5 rounded-xl bg-indigo-50 group-hover:bg-indigo-600 group-hover:text-white text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:group-hover:bg-indigo-600 text-xs font-bold transition-colors whitespace-nowrap"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-50 group-hover:bg-orange-500 group-hover:text-white text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:group-hover:bg-orange-500 text-xs font-bold transition-colors whitespace-nowrap"
                     >
                       Retourner
                     </button>

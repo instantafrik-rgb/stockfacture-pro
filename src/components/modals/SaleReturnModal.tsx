@@ -292,7 +292,7 @@ export const SaleReturnModal: React.FC<SaleReturnModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95"
+                className="px-6 py-2.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95"
               >
                 Fermer
               </button>
@@ -347,7 +347,7 @@ export const SaleReturnModal: React.FC<SaleReturnModalProps> = ({
                           disabled={isExhausted}
                           checked={sel.selected}
                           onChange={() => handleToggleItem(it.id)}
-                          className="mt-1.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:cursor-not-allowed"
+                          className="mt-1.5 w-4 h-4 rounded text-indigo-600 focus:ring-orange-500 cursor-pointer disabled:cursor-not-allowed"
                         />
                         <ProductThumbnail
                           imageUrl={state.products.find((p) => p.id === it.productId)?.imageUrl}
@@ -682,7 +682,7 @@ export const SaleReturnModal: React.FC<SaleReturnModalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting || selectedReturnItems.length === 0}
-                className="px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                className="px-5 py-2.5 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-transform active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>

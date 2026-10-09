@@ -234,7 +234,7 @@ export const RestockRequestsDrawer: React.FC<RestockRequestsDrawerProps> = ({
               onClick={() => setStatusFilter('contacted')}
               className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${
                 statusFilter === 'contacted'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-orange-500 text-white shadow-xs'
                   : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
               }`}
             >

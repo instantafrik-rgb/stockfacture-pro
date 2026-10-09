@@ -220,7 +220,7 @@ export const CashClosureModal: React.FC<CashClosureModalProps> = ({
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-xs transition-transform active:scale-95 flex items-center justify-center gap-2"
+                  className="flex-1 py-3 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs sm:text-sm shadow-xs transition-transform active:scale-95 flex items-center justify-center gap-2"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Imprimer le ticket Z</span>

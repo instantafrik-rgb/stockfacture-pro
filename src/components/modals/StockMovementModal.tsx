@@ -432,7 +432,7 @@ export const StockMovementModal: React.FC<StockMovementModalProps> = ({
                   ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20'
                   : type === 'out'
                   ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
-                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20'
+                  : 'bg-orange-500 hover:bg-orange-600 shadow-indigo-500/20'
               }`}
             >
               {isSubmitting

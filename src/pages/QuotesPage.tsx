@@ -212,7 +212,7 @@ export const QuotesPage: React.FC = () => {
             placeholder="Rechercher par n° de devis ou client..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 shadow-xs"
+            className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500 shadow-xs"
           />
         </div>
 
@@ -255,7 +255,7 @@ export const QuotesPage: React.FC = () => {
             onClick={() => setStatusFilter('converted')}
             className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               statusFilter === 'converted'
-                ? 'bg-indigo-600 text-white'
+                ? 'bg-orange-500 text-white'
                 : 'bg-white dark:bg-slate-900 text-indigo-600 border border-slate-200 dark:border-slate-800'
             }`}
           >
@@ -277,7 +277,7 @@ export const QuotesPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-xs"
+            className="px-4 py-2 rounded-xl bg-orange-500 text-white text-xs font-bold shadow-xs"
           >
             + Nouveau devis
           </button>
@@ -392,7 +392,7 @@ export const QuotesPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleConvert(detailQuote.id)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold ml-auto shadow-xs"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold ml-auto shadow-xs"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Convertir en Facture</span>
@@ -672,7 +672,7 @@ export const QuotesPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs"
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 rounded-xl shadow-xs"
                 >
                   Enregistrer le devis
                 </button>

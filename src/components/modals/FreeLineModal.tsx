@@ -115,7 +115,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
               placeholder="Ex: Frais de livraison, Main d’œuvre, Article spécial..."
               value={designation}
               onChange={(e) => setDesignation(e.target.value)}
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
             />
           </div>
 
@@ -130,7 +130,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
                 placeholder="Ex: REF-DIV-01"
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
               />
             </div>
             <div>
@@ -142,7 +142,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
                 placeholder="pièce, heure, kg, forfait..."
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
-                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
               />
             </div>
           </div>
@@ -160,7 +160,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
                 required
                 value={quantity}
                 onChange={(e) => setQuantity(parseFloat(e.target.value) || 0)}
-                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
               />
             </div>
             <div>
@@ -174,7 +174,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
                 required
                 value={unitPrice}
                 onChange={(e) => setUnitPrice(parseFloat(e.target.value) || 0)}
-                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
               />
             </div>
             <div>
@@ -188,7 +188,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
                 step="any"
                 value={discountPercent}
                 onChange={(e) => setDiscountPercent(parseFloat(e.target.value) || 0)}
-                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
               />
             </div>
           </div>
@@ -203,7 +203,7 @@ export const FreeLineModal: React.FC<FreeLineModalProps> = ({ isOpen, onClose, o
               placeholder="Détails supplémentaires pour la facture..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-orange-500"
             />
           </div>
 

@@ -36,7 +36,7 @@ export const PinLockModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-white p-6 select-none">
       <div className="w-full max-w-xs flex flex-col items-center space-y-6">
-        <div className="w-16 h-16 rounded-2xl bg-indigo-600/30 flex items-center justify-center text-indigo-400 border border-indigo-500/30">
+        <div className="w-16 h-16 rounded-2xl bg-orange-500/30 flex items-center justify-center text-indigo-400 border border-indigo-500/30">
           <Lock className="w-8 h-8" />
         </div>
 
@@ -74,7 +74,7 @@ export const PinLockModal: React.FC = () => {
               key={digit}
               type="button"
               onClick={() => handleDigit(digit)}
-              className="h-16 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:bg-indigo-600 active:scale-95 text-xl font-bold transition-all flex items-center justify-center border border-slate-700/60"
+              className="h-16 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:bg-orange-500 active:scale-95 text-xl font-bold transition-all flex items-center justify-center border border-slate-700/60"
             >
               {digit}
             </button>
@@ -83,7 +83,7 @@ export const PinLockModal: React.FC = () => {
           <button
             type="button"
             onClick={() => handleDigit('0')}
-            className="h-16 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:bg-indigo-600 active:scale-95 text-xl font-bold transition-all flex items-center justify-center border border-slate-700/60"
+            className="h-16 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:bg-orange-500 active:scale-95 text-xl font-bold transition-all flex items-center justify-center border border-slate-700/60"
           >
             0
           </button>

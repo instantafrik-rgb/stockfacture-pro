@@ -607,7 +607,7 @@ export const ReportsPage: React.FC = () => {
                   {/* Progress bar */}
                   <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-indigo-600 transition-all duration-300"
+                      className="h-full rounded-full bg-orange-500 transition-all duration-300"
                       style={{ width: `${Math.min(100, item.percentage)}%` }}
                     />
                   </div>
