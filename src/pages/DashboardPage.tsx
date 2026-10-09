@@ -16,6 +16,7 @@ import {
   Award,
   TrendingDown,
   Minus,
+  PieChart,
 } from 'lucide-react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatDate, formatRelativeDate } from '../utils/formatters';
@@ -27,7 +28,6 @@ export const DashboardPage: React.FC = () => {
   const { currency, currencyPosition, name: companyName } = state.settings;
   const curr = (val: number) => formatCurrency(val, currency, currencyPosition);
 
-  // Stock movement modal for quick replenishment
   const [showStockModal, setShowStockModal] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
 
@@ -38,7 +38,6 @@ export const DashboardPage: React.FC = () => {
   // CALCULS
   // ============================================
 
-  // 1. Chiffre d'affaires du jour
   const todayInvoices = useMemo(
     () => state.invoices.filter((i) => i.status !== 'cancelled' && i.date === todayStr),
     [state.invoices, todayStr]
@@ -54,7 +53,6 @@ export const DashboardPage: React.FC = () => {
   const todaySalesCount = todayInvoices.length;
   const averageTicket = todaySalesCount > 0 ? Math.round(todayRevenue / todaySalesCount) : 0;
 
-  // 2. Chiffre d'affaires d'hier (comparaison)
   const yesterdayStr = useMemo(() => {
     const d = new Date(now);
     d.setDate(d.getDate() - 1);
@@ -72,7 +70,7 @@ export const DashboardPage: React.FC = () => {
     return Math.round(((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100);
   }, [todayRevenue, yesterdayRevenue]);
 
-  // 3. Graphique 7 derniers jours
+  // 7 derniers jours
   const last7Days = useMemo(() => {
     const days: Array<{ date: string; label: string; revenue: number }> = [];
     const dayLabels = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
@@ -97,7 +95,88 @@ export const DashboardPage: React.FC = () => {
     [last7Days]
   );
 
-  // 4. Top 3 produits (7 derniers jours)
+  // ============================================
+  // SPARKLINE (Amélioration 1)
+  // ============================================
+  const sparklineData = useMemo(() => {
+    const width = 300;
+    const height = 40;
+    const max = Math.max(...last7Days.map((d) => d.revenue), 1);
+    const step = width / (last7Days.length - 1);
+
+    const points = last7Days.map((day, i) => {
+      const x = i * step;
+      const y = height - (day.revenue / max) * (height - 4) - 2;
+      return { x, y };
+    });
+
+    const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+    const areaPath = `${path} L${width},${height} L0,${height} Z`;
+
+    return { path, areaPath, points, width, height };
+  }, [last7Days]);
+
+  // ============================================
+  // DONUT CHART (Amélioration 3)
+  // ============================================
+  const categoriesData = useMemo(() => {
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
+
+    const stats = new Map<string, { name: string; revenue: number; color: string }>();
+
+    state.invoices
+      .filter((inv) => inv.status !== 'cancelled' && inv.date >= sevenDaysAgoStr)
+      .forEach((inv) => {
+        inv.items.forEach((item) => {
+          if (item.isFreeLine) return;
+          const product = state.products.find((p) => p.id === item.productId);
+          const cat = state.categories.find((c) => c.id === product?.categoryId);
+          const key = cat?.id || 'uncategorized';
+          const existing = stats.get(key) || {
+            name: cat?.name || 'Sans catégorie',
+            revenue: 0,
+            color: cat?.color || '#64748B',
+          };
+          existing.revenue += item.total;
+          stats.set(key, existing);
+        });
+      });
+
+    return Array.from(stats.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+  }, [state.invoices, state.products, state.categories, now]);
+
+  const donutSegments = useMemo(() => {
+    const total = categoriesData.reduce((sum, c) => sum + c.revenue, 0);
+    if (total === 0) return [];
+
+    const radius = 60;
+    const circumference = 2 * Math.PI * radius;
+    let offset = 0;
+
+    return categoriesData.map((cat) => {
+      const percentage = cat.revenue / total;
+      const dashLength = percentage * circumference;
+      const segment = {
+        ...cat,
+        percentage: Math.round(percentage * 100),
+        dashLength,
+        dashOffset: -offset,
+        radius,
+        circumference,
+      };
+      offset += dashLength;
+      return segment;
+    });
+  }, [categoriesData]);
+
+  // ============================================
+  // AUTRES
+  // ============================================
+
   const topProducts = useMemo(() => {
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -117,12 +196,9 @@ export const DashboardPage: React.FC = () => {
         });
       });
 
-    return Array.from(productStats.values())
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 3);
+    return Array.from(productStats.values()).sort((a, b) => b.revenue - a.revenue).slice(0, 3);
   }, [state.invoices, now]);
 
-  // 5. Créances
   const unpaidInvoices = useMemo(
     () =>
       state.invoices.filter(
@@ -136,14 +212,12 @@ export const DashboardPage: React.FC = () => {
   );
   const unpaidInvoicesCount = unpaidInvoices.length;
 
-  // 6. Stock faible
   const lowStockProducts = useMemo(
     () => state.products.filter((p) => p.stockQuantity <= p.minStockAlert),
     [state.products]
   );
   const lowStockCount = lowStockProducts.length;
 
-  // 7. Activité récente
   const recentInvoices = useMemo(
     () => state.invoices.filter((i) => i.status !== 'cancelled').slice(0, 5),
     [state.invoices]
@@ -154,17 +228,16 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200 max-w-4xl mx-auto pb-[calc(var(--bottom-nav-height)+env(safe-area-inset-bottom,0px)+36px)] md:pb-8">
-      {/* ============================================ */}
-      {/* 1. HEADER */}
-      {/* ============================================ */}
+      {/* HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-black text-[#14213D] dark:text-white tracking-tight">
-              {greeting}
+              {greeting} 👋
             </h1>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              EN DIRECT
             </span>
           </div>
           <p className="text-xs sm:text-sm text-[#64748B] dark:text-slate-400 mt-0.5">
@@ -183,10 +256,9 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* ============================================ */}
-      {/* 2. CARTE VEDETTE : C.A. DU JOUR (minimaliste) */}
+      {/* KPI HÉROS AVEC SPARKLINE */}
       {/* ============================================ */}
       <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm relative overflow-hidden">
-        {/* Liseré orange fin en haut (accent subtil) */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 via-orange-400 to-transparent" />
 
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -201,7 +273,7 @@ export const DashboardPage: React.FC = () => {
 
           {(yesterdayRevenue > 0 || todayRevenue > 0) && (
             <div
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black border ${
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black border transition-all ${
                 revenueVariation > 0
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
                   : revenueVariation < 0
@@ -228,6 +300,38 @@ export const DashboardPage: React.FC = () => {
           {curr(todayRevenue)}
         </div>
 
+        {/* Sparkline SVG */}
+        {sparklineData.points.length > 0 && (
+          <div className="mt-3 -mx-1">
+            <svg
+              viewBox={`0 0 ${sparklineData.width} ${sparklineData.height}`}
+              className="w-full h-12"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="sparkline-gradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#F97316" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#F97316" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d={sparklineData.areaPath} fill="url(#sparkline-gradient)" />
+              <path
+                d={sparklineData.path}
+                fill="none"
+                stroke="#F97316"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  strokeDasharray: 1000,
+                  strokeDashoffset: 1000,
+                  animation: 'drawSparkline 1.5s ease-out forwards',
+                }}
+              />
+            </svg>
+          </div>
+        )}
+
         <div className="flex items-center gap-3 mt-3 text-xs text-[#64748B] dark:text-slate-400 font-semibold flex-wrap">
           <span>{todaySalesCount} vente{todaySalesCount > 1 ? 's' : ''} aujourd'hui</span>
           <span className="text-slate-300 dark:text-slate-700">•</span>
@@ -236,101 +340,99 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* ============================================ */}
-      {/* 3. KPI SECONDAIRES (5 cartes) */}
+      {/* KPI SECONDAIRES */}
       {/* ============================================ */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {/* Encaissé */}
-        <div className="p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-              Encaissé
-            </span>
-            <Coins className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="text-base sm:text-lg font-black font-financial text-emerald-600 dark:text-emerald-400">
-            {curr(todayCollected)}
-          </div>
-          <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
-            Caisse / banques
-          </span>
-        </div>
+        {[
+          {
+            label: 'Encaissé',
+            value: curr(todayCollected),
+            sub: 'Caisse / banques',
+            color: 'emerald',
+            icon: Coins,
+            onClick: undefined,
+          },
+          {
+            label: 'Reste dû',
+            value: curr(totalReceivables),
+            sub: 'Créances clients',
+            color: 'rose',
+            icon: BadgeAlert,
+            onClick: () => navigate('invoices'),
+          },
+          {
+            label: 'Ventes',
+            value: todaySalesCount.toString(),
+            sub: "Aujourd'hui",
+            color: 'blue',
+            icon: ShoppingCart,
+            onClick: undefined,
+          },
+          {
+            label: 'Stock faible',
+            value: lowStockCount.toString(),
+            sub: 'À réapprovisionner',
+            color: 'amber',
+            icon: AlertTriangle,
+            onClick: () => navigate('stock'),
+          },
+          {
+            label: 'Impayées',
+            value: unpaidInvoicesCount.toString(),
+            sub: 'Factures',
+            color: 'rose',
+            icon: FileText,
+            onClick: () => navigate('invoices'),
+          },
+        ].map((kpi, idx) => {
+          const Icon = kpi.icon;
+          const colors = {
+            emerald: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-900/40',
+            rose: 'text-rose-700 dark:text-rose-400 bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400 border-rose-200/60 dark:border-rose-900/40',
+            blue: 'text-blue-700 dark:text-blue-400 bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400 border-blue-200/60 dark:border-blue-900/40',
+            amber: 'text-amber-700 dark:text-amber-400 bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400 border-amber-200/60 dark:border-amber-900/40',
+          };
+          const [labelColor, iconBg] = colors[kpi.color as keyof typeof colors].split(' ').reduce(
+            (acc, cls, i) => {
+              if (i < 2) acc[0] += cls + ' ';
+              else acc[1] += cls + ' ';
+              return acc;
+            },
+            ['', '']
+          );
 
-        {/* Reste à encaisser */}
-        <div
-          onClick={() => navigate('invoices')}
-          className="p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm cursor-pointer hover:border-rose-300 transition-colors"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-              Reste dû
-            </span>
-            <BadgeAlert className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-          </div>
-          <div className="text-base sm:text-lg font-black font-financial text-rose-600 dark:text-rose-400">
-            {curr(totalReceivables)}
-          </div>
-          <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
-            Créances clients
-          </span>
-        </div>
-
-        {/* Nb ventes */}
-        <div className="p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
-              Ventes
-            </span>
-            <ShoppingCart className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-          </div>
-          <div className="text-base sm:text-lg font-black text-[#14213D] dark:text-white">
-            {todaySalesCount}
-          </div>
-          <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
-            Aujourd'hui
-          </span>
-        </div>
-
-        {/* Stock faible */}
-        <div
-          onClick={() => navigate('stock')}
-          className="p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm cursor-pointer hover:border-amber-300 transition-colors"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-              Stock faible
-            </span>
-            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-          </div>
-          <div className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-400">
-            {lowStockCount}
-          </div>
-          <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
-            À réapprovisionner
-          </span>
-        </div>
-
-        {/* Impayées */}
-        <div
-          onClick={() => navigate('invoices')}
-          className="col-span-2 sm:col-span-1 p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm cursor-pointer hover:border-rose-300 transition-colors"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-              Impayées
-            </span>
-            <FileText className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-          </div>
-          <div className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400">
-            {unpaidInvoicesCount}
-          </div>
-          <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
-            Factures
-          </span>
-        </div>
+          return (
+            <div
+              key={idx}
+              onClick={kpi.onClick}
+              className={`p-3.5 rounded-2xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm transition-all duration-200 ${
+                kpi.onClick ? 'cursor-pointer hover:border-orange-300 hover:-translate-y-0.5' : ''
+              }`}
+              style={{
+                animation: `fadeSlideUp 0.4s ease-out ${idx * 0.05}s both`,
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${labelColor}`}>
+                  {kpi.label}
+                </span>
+                <div className={`w-6 h-6 rounded-lg flex items-center justify-center border ${iconBg}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              <div className={`text-base sm:text-lg font-black font-financial ${labelColor}`}>
+                {kpi.value}
+              </div>
+              <span className="text-[10px] text-[#64748B] dark:text-slate-400 mt-0.5 block">
+                {kpi.sub}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* ============================================ */}
-      {/* 4. GRAPHIQUE 7 JOURS */}
+      {/* GRAPHIQUE 7 JOURS */}
       {/* ============================================ */}
       <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -373,6 +475,7 @@ export const DashboardPage: React.FC = () => {
                     style={{
                       height: `${Math.max(heightPercent, 4)}%`,
                       minHeight: '4px',
+                      animation: `growBar 0.6s ease-out ${idx * 0.05}s both`,
                     }}
                   />
                 </div>
@@ -404,7 +507,101 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* ============================================ */}
-      {/* 5. TOP 3 PRODUITS */}
+      {/* DONUT CHART : RÉPARTITION PAR CATÉGORIE */}
+      {/* ============================================ */}
+      {donutSegments.length > 0 && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 dark:bg-purple-950/50 dark:text-purple-400 flex items-center justify-center border border-purple-200/60 dark:border-purple-900/40">
+              <PieChart className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-base font-black text-[#14213D] dark:text-white">
+                Répartition par catégorie
+              </h3>
+              <p className="text-[11px] text-[#64748B] dark:text-slate-400">
+                Sur les 7 derniers jours
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-6">
+            {/* Donut SVG */}
+            <div className="relative shrink-0">
+              <svg width="160" height="160" viewBox="0 0 160 160" className="transform -rotate-90">
+                <circle
+                  cx="80"
+                  cy="80"
+                  r="60"
+                  fill="none"
+                  stroke="#F1F5F9"
+                  strokeWidth="20"
+                  className="dark:stroke-slate-800"
+                />
+                {donutSegments.map((seg, idx) => (
+                  <circle
+                    key={idx}
+                    cx="80"
+                    cy="80"
+                    r={seg.radius}
+                    fill="none"
+                    stroke={seg.color}
+                    strokeWidth="20"
+                    strokeDasharray={`${seg.dashLength} ${seg.circumference}`}
+                    strokeDashoffset={seg.dashOffset}
+                    strokeLinecap="butt"
+                    style={{
+                      animation: `drawDonut 0.8s ease-out ${idx * 0.1}s both`,
+                    }}
+                  />
+                ))}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748B] dark:text-slate-400">
+                  Total
+                </span>
+                <span className="text-xs sm:text-sm font-black font-financial text-[#14213D] dark:text-white">
+                  {curr(weekTotalRevenue)}
+                </span>
+              </div>
+            </div>
+
+            {/* Légende */}
+            <div className="flex-1 w-full space-y-2">
+              {donutSegments.map((seg, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between gap-3 text-xs"
+                  style={{
+                    animation: `fadeSlideUp 0.4s ease-out ${idx * 0.08}s both`,
+                  }}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-3 h-3 rounded-sm shrink-0"
+                      style={{ backgroundColor: seg.color }}
+                    />
+                    <span className="font-bold text-[#14213D] dark:text-white truncate">
+                      {seg.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono font-black text-[#14213D] dark:text-white">
+                      {seg.percentage}%
+                    </span>
+                    <span className="text-[#64748B] dark:text-slate-400 font-semibold hidden sm:inline">
+                      {curr(seg.revenue)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* TOP 3 PRODUITS */}
       {/* ============================================ */}
       {topProducts.length > 0 && (
         <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm space-y-3">
@@ -439,7 +636,10 @@ export const DashboardPage: React.FC = () => {
               return (
                 <div
                   key={idx}
-                  className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3"
+                  className="p-3 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3 transition-all duration-200 hover:shadow-sm"
+                  style={{
+                    animation: `fadeSlideUp 0.4s ease-out ${idx * 0.1}s both`,
+                  }}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-xl shrink-0">{medals[idx]}</span>
@@ -469,7 +669,7 @@ export const DashboardPage: React.FC = () => {
       )}
 
       {/* ============================================ */}
-      {/* 6. ACTIVITÉ RÉCENTE */}
+      {/* ACTIVITÉ RÉCENTE */}
       {/* ============================================ */}
       <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm space-y-3">
         <div className="flex items-center justify-between">
@@ -503,11 +703,14 @@ export const DashboardPage: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-2">
-            {recentInvoices.map((inv) => (
+            {recentInvoices.map((inv, idx) => (
               <div
                 key={inv.id}
                 onClick={() => navigate('invoices', inv.id)}
-                className="p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 hover:bg-orange-50/40 dark:hover:bg-slate-800 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3 text-xs transition-colors cursor-pointer group"
+                className="p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 hover:bg-orange-50/40 dark:hover:bg-slate-800 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3 text-xs transition-all cursor-pointer group"
+                style={{
+                  animation: `fadeSlideUp 0.4s ease-out ${idx * 0.06}s both`,
+                }}
               >
                 <div className="min-w-0 pr-2">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -546,7 +749,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* ============================================ */}
-      {/* 7. STOCK FAIBLE */}
+      {/* STOCK FAIBLE */}
       {/* ============================================ */}
       <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#131B2E] border border-[#E8EDF2] dark:border-[#22304E] shadow-sm space-y-3">
         <div className="flex items-center justify-between">
@@ -581,12 +784,15 @@ export const DashboardPage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {lowStockProducts.slice(0, 6).map((product) => {
+            {lowStockProducts.slice(0, 6).map((product, idx) => {
               const isOut = product.stockQuantity <= 0;
               return (
                 <div
                   key={product.id}
-                  className="p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3 text-xs"
+                  className="p-3.5 rounded-2xl bg-[#FAFAF8] dark:bg-slate-800/60 border border-[#E8EDF2] dark:border-slate-700/60 flex items-center justify-between gap-3 text-xs transition-all duration-200 hover:shadow-sm"
+                  style={{
+                    animation: `fadeSlideUp 0.4s ease-out ${idx * 0.06}s both`,
+                  }}
                 >
                   <div className="min-w-0 pr-2">
                     <span className="text-[10px] font-mono text-slate-400 block truncate">
@@ -633,6 +839,45 @@ export const DashboardPage: React.FC = () => {
         defaultType="in"
         defaultProductId={selectedProductId}
       />
+
+      {/* ============================================ */}
+      {/* ANIMATIONS CSS (injectées dans le DOM) */}
+      {/* ============================================ */}
+      <style>{`
+        @keyframes fadeSlideUp {
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes growBar {
+          from {
+            transform: scaleY(0);
+            transform-origin: bottom;
+          }
+          to {
+            transform: scaleY(1);
+            transform-origin: bottom;
+          }
+        }
+
+        @keyframes drawSparkline {
+          to {
+            stroke-dashoffset: 0;
+          }
+        }
+
+        @keyframes drawDonut {
+          from {
+            stroke-dasharray: 0 999;
+          }
+        }
+      `}</style>
     </div>
   );
 };
