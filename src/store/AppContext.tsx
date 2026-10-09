@@ -230,7 +230,7 @@ interface AppContextType {
   resetAllData: () => Promise<void>;
   resetStateOnLogout: () => Promise<void>;
   reloadStateForUser: (userId: string | null) => Promise<void>;
-  completeOnboarding: (customSettings?: { name: string; currency: string }) => Promise<void>;
+  completeOnboarding: (customSettings?: { name: string; currency: string; vatEnabled?: boolean; vatRate?: number }) => Promise<void>;
   importBackup: (backupState: AppState) => Promise<boolean>;
 }
 
@@ -2132,16 +2132,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const completeOnboarding = useCallback(
-    async (customSettings?: { name: string; currency: string }) => {
+    const completeOnboarding = useCallback(
+    async (customSettings?: { name: string; currency: string; vatEnabled?: boolean; vatRate?: number }) => {
       const uid = auth.currentUser?.uid;
       markUserOnboardedLocally(uid);
 
-      const updatedSettings: CompanySettings = {
+    const updatedSettings: CompanySettings = {
         ...state.settings,
         hasCompletedOnboarding: true,
         ...(customSettings?.name ? { name: customSettings.name.trim() } : {}),
         ...(customSettings?.currency ? { currency: customSettings.currency.trim() } : {}),
+        ...(customSettings?.vatEnabled !== undefined ? { vatEnabled: customSettings.vatEnabled } : {}),
+        ...(customSettings?.vatRate !== undefined ? { vatRate: customSettings.vatRate } : {}),
       };
 
       const nextState: AppState = {
