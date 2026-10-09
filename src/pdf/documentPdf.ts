@@ -11,6 +11,32 @@ import { formatCurrency, formatDate, formatDateTime, getPaymentMethodLabel } fro
 const getCurr = (val: number, s: CompanySettings) => formatCurrency(val, s.currency, s.currencyPosition);
 
 /**
+ * Ajoute le logo de l'entreprise dans un PDF jsPDF, à une position donnée.
+ * Retourne la hauteur consommée (en mm) pour ajuster le layout.
+ */
+function addCompanyLogo(
+  doc: jsPDF,
+  settings: CompanySettings,
+  x: number,
+  y: number,
+  size: number
+): boolean {
+  if (!settings.companyLogo) return false;
+  try {
+    // Détecte le format depuis le data URI
+    const format = settings.companyLogo.includes('image/png') ? 'PNG'
+      : settings.companyLogo.includes('image/jpeg') || settings.companyLogo.includes('image/jpg') ? 'JPEG'
+      : settings.companyLogo.includes('image/webp') ? 'WEBP'
+      : 'PNG';
+    doc.addImage(settings.companyLogo, format, x, y, size, size, undefined, 'FAST');
+    return true;
+  } catch (e) {
+    console.warn('[PDF] Impossible d\'ajouter le logo:', e);
+    return false;
+  }
+}
+
+/**
  * Generate and download or share an Invoice PDF with modern, light professional design
  */
 export async function generateInvoicePdf(
@@ -30,11 +56,20 @@ export async function generateInvoicePdf(
   let y = 18;
 
   // 1. TOP HEADER (Pure White Background, Crisp Dark Typography)
+  // Logo de l'entreprise (à gauche, si présent)
+  let companyTextX = margin;
+  if (settings.companyLogo) {
+    const logoAdded = addCompanyLogo(doc, settings, margin, y, 22);
+    if (logoAdded) {
+      companyTextX = margin + 26; // décale le texte à droite du logo
+    }
+  }
+
   // Left: Company Information
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42); // Deep Charcoal #0F172A
-  doc.text(settings.name || 'StockFacture Pro', margin, y + 4);
+  doc.text(settings.name || 'StockFacture Pro', companyTextX, y + 4);
 
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
@@ -42,22 +77,22 @@ export async function generateInvoicePdf(
 
   let compY = y + 10;
   if (settings.address) {
-    doc.text(settings.address, margin, compY);
+    doc.text(settings.address, companyTextX, compY);
     compY += 4.5;
   }
   const phoneEmail = [settings.phone && `Tél : ${settings.phone}`, settings.email && `Email : ${settings.email}`]
     .filter(Boolean)
     .join('  •  ');
   if (phoneEmail) {
-    doc.text(phoneEmail, margin, compY);
+    doc.text(phoneEmail, companyTextX, compY);
     compY += 4.5;
   }
   if (settings.website && settings.website.trim()) {
-    doc.text(`Site web : ${settings.website.trim()}`, margin, compY);
+    doc.text(`Site web : ${settings.website.trim()}`, companyTextX, compY);
     compY += 4.5;
   }
   if (settings.taxId) {
-    doc.text(`NIF / RCCM : ${settings.taxId}`, margin, compY);
+    doc.text(`NIF / RCCM : ${settings.taxId}`, companyTextX, compY);
     compY += 4.5;
   }
 
@@ -370,6 +405,19 @@ export async function generateReceiptPdf(
   doc.setFillColor(15, 23, 42);
   doc.roundedRect(margin, y, pageWidth - margin * 2, 24, 3, 3, 'F');
 
+  // Logo (à droite du header sombre)
+  if (settings.companyLogo) {
+    try {
+      const format = settings.companyLogo.includes('image/png') ? 'PNG'
+        : settings.companyLogo.includes('image/jpeg') || settings.companyLogo.includes('image/jpg') ? 'JPEG'
+        : settings.companyLogo.includes('image/webp') ? 'WEBP'
+        : 'PNG';
+      doc.addImage(settings.companyLogo, format, pageWidth - margin - 16, y + 4, 12, 12, undefined, 'FAST');
+    } catch (e) {
+      console.warn('[PDF] Impossible d\'ajouter le logo sur le reçu:', e);
+    }
+  }
+
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -383,11 +431,11 @@ export async function generateReceiptPdf(
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(52, 211, 153); // Emerald
-  doc.text('REÇU DE PAIEMENT', pageWidth - margin - 6, y + 10, { align: 'right' });
+  doc.text('REÇU DE PAIEMENT', pageWidth - margin - 22, y + 10, { align: 'right' });
 
   doc.setFontSize(8);
   doc.setTextColor(255, 255, 255);
-  doc.text(formatDate(payment.date), pageWidth - margin - 6, y + 17, { align: 'right' });
+  doc.text(formatDate(payment.date), pageWidth - margin - 22, y + 17, { align: 'right' });
 
   y += 32;
 
@@ -500,6 +548,19 @@ export async function generateQuotePdf(
   doc.setFillColor(67, 56, 202); // Indigo-700
   doc.roundedRect(margin, y, pageWidth - margin * 2, 28, 3, 3, 'F');
 
+  // Logo (à droite dans la barre indigo)
+  if (settings.companyLogo) {
+    try {
+      const format = settings.companyLogo.includes('image/png') ? 'PNG'
+        : settings.companyLogo.includes('image/jpeg') || settings.companyLogo.includes('image/jpg') ? 'JPEG'
+        : settings.companyLogo.includes('image/webp') ? 'WEBP'
+        : 'PNG';
+      doc.addImage(settings.companyLogo, format, pageWidth - margin - 30, y + 5, 18, 18, undefined, 'FAST');
+    } catch (e) {
+      console.warn('[PDF] Impossible d\'ajouter le logo sur le devis:', e);
+    }
+  }
+
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
@@ -514,12 +575,12 @@ export async function generateQuotePdf(
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
-  doc.text('DEVIS', pageWidth - margin - 8, y + 11, { align: 'right' });
+  doc.text('DEVIS', pageWidth - margin - 38, y + 11, { align: 'right' });
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(199, 210, 254);
-  doc.text(quote.number, pageWidth - margin - 8, y + 18, { align: 'right' });
+  doc.text(quote.number, pageWidth - margin - 38, y + 18, { align: 'right' });
 
   y += 36;
 
@@ -714,7 +775,8 @@ export async function generateThermalReceiptPdf(
   const itemsHeight = invoice.items.length * (is58 ? 7.5 : 6.5);
   const paymentsHeight = Math.max(1, payments.length) * 5;
   const notesHeight = (invoice.notes ? 8 : 0) + (settings.invoiceFooterNote ? 12 : 0);
-  const totalHeight = Math.max(100, Math.ceil(baseHeight + itemsHeight + paymentsHeight + notesHeight));
+  const logoExtraHeight = settings.companyLogo ? (is58 ? 18 : 22) : 0;
+  const totalHeight = Math.max(100, Math.ceil(baseHeight + itemsHeight + paymentsHeight + notesHeight + logoExtraHeight));
 
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -726,6 +788,30 @@ export async function generateThermalReceiptPdf(
   let y = 6;
 
   // 1. STORE HEADER (Centered)
+  // Logo de l'entreprise (centré, en haut)
+  if (settings.companyLogo) {
+    try {
+      const format = settings.companyLogo.includes('image/png') ? 'PNG'
+        : settings.companyLogo.includes('image/jpeg') || settings.companyLogo.includes('image/jpg') ? 'JPEG'
+        : settings.companyLogo.includes('image/webp') ? 'WEBP'
+        : 'PNG';
+      const logoSize = is58 ? 14 : 18;
+      doc.addImage(
+        settings.companyLogo,
+        format,
+        (pageWidth - logoSize) / 2,
+        y,
+        logoSize,
+        logoSize,
+        undefined,
+        'FAST'
+      );
+      y += logoSize + 3;
+    } catch (e) {
+      console.warn('[PDF] Impossible d\'ajouter le logo sur le ticket:', e);
+    }
+  }
+
   doc.setFont('courier', 'bold');
   doc.setFontSize(is58 ? 9.5 : 12);
   doc.setTextColor(0, 0, 0);

@@ -40,6 +40,8 @@ export interface CompanySettings {
   email: string;
   website?: string;
   taxId?: string; // NIF / RCCM / SIRET / TVA Intracommunautaire
+    /** Logo de l'entreprise en base64 (data:image/png;base64,...) */
+  companyLogo?: string;
   currency: string; // e.g. "FCFA", "EUR", "USD"
   currencyPosition: CurrencyPosition;
   invoicePrefix: string; // e.g. "FAC-2026-"

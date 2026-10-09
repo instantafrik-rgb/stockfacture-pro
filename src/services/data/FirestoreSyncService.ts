@@ -1903,14 +1903,13 @@ export class FirestoreSyncService {
    * 3. Atomically decrements product stock without lost updates.
    * 4. Writes the invoice, payment, and movements all in the same atomic transaction.
    */
-    public async commitSaleStockTransaction(params: {
+   public async commitSaleStockTransaction(params: {
     userId: string;
     invoice: Invoice;
     payment?: PaymentRecord;
     items: Array<{ productId?: string; designation: string; quantity: number; isFreeLine?: boolean }>;
     movements: StockMovement[];
     allowNegativeStock: boolean;
-    // [TÂCHE #2] nextInvoiceNumber retiré : désormais lu et incrémenté dans la transaction
   }): Promise<{ success: boolean; error?: string; updatedStocks?: Record<string, number>; confirmedInvoiceNumber?: string }> {
     try {
       const { userId, invoice, payment, items, movements, allowNegativeStock } = params;
@@ -1918,7 +1917,11 @@ export class FirestoreSyncService {
       let confirmedInvoiceNumber: string | undefined;
 
       await runTransaction(db, async (transaction) => {
-        // Step 1: Read all catalog products involved in the sale
+        // =====================================================
+        // PHASE 1 : TOUTES LES LECTURES (obligatoire Firestore)
+        // =====================================================
+
+        // Step 1a: Read all catalog products involved in the sale
         const productReads: Array<{ ref: any; currentStock: number; id: string; designation: string; qty: number }> = [];
 
         for (const item of items) {
@@ -1938,50 +1941,7 @@ export class FirestoreSyncService {
           }
         }
 
-        // Step 2: Validate stock sufficiency if negative stock is disallowed
-        if (!allowNegativeStock) {
-          for (const pr of productReads) {
-            if (pr.currentStock < pr.qty) {
-              throw new Error(
-                `Stock insuffisant sur le Cloud pour "${pr.designation}". Disponible: ${pr.currentStock}, Demandé: ${pr.qty}.`
-              );
-            }
-          }
-        }
-
-        // Step 3: Perform atomic writes for all products
-        const nowIso = new Date().toISOString();
-        for (const pr of productReads) {
-          const newStock = pr.currentStock - pr.qty;
-          transaction.update(pr.ref, {
-            stockQuantity: newStock,
-            updatedAt: nowIso,
-          });
-          updatedStocks[pr.id] = newStock;
-        }
-
-        // Step 4: Save the invoice
-        const invRef = doc(db, 'users', userId, 'invoices', invoice.id);
-        transaction.set(invRef, sanitizeForFirestore({
-          ...invoice,
-          updatedAt: nowIso,
-        }));
-
-        // Step 5: Save payment if provided
-        if (payment) {
-          const payRef = doc(db, 'users', userId, 'payments', payment.id);
-          transaction.set(payRef, sanitizeForFirestore(payment));
-        }
-
-        // Step 6: Save each stock movement
-        for (const mov of movements) {
-          const movRef = doc(db, 'users', userId, 'movements', mov.id);
-          transaction.set(movRef, sanitizeForFirestore(mov));
-        }
-
-                // Step 7: [TÂCHE #2] Lecture et incrémentation atomique du nextInvoiceNumber.
-        // Cette lecture est faite DANS la transaction : deux appareils simultanés ne peuvent
-        // pas lire la même valeur. L'un des deux échouera et sera réessayé par le SDK Firestore.
+        // Step 1b: Read current nextInvoiceNumber from Firestore BEFORE any write
         const settingsRef = doc(db, 'users', userId, 'settings', 'company');
         const settingsSnap = await transaction.get(settingsRef);
 
@@ -2002,16 +1962,65 @@ export class FirestoreSyncService {
         const padded = String(currentNumber).padStart(4, '0');
         confirmedInvoiceNumber = `${prefix}${year}-${padded}`;
 
-        // Incrémentation atomique
+        // =====================================================
+        // PHASE 2 : VALIDATION (pas de lecture)
+        // =====================================================
+
+        if (!allowNegativeStock) {
+          for (const pr of productReads) {
+            if (pr.currentStock < pr.qty) {
+              throw new Error(
+                `Stock insuffisant sur le Cloud pour "${pr.designation}". Disponible: ${pr.currentStock}, Demandé: ${pr.qty}.`
+              );
+            }
+          }
+        }
+
+        // =====================================================
+        // PHASE 3 : TOUTES LES ÉCRITURES
+        // =====================================================
+
+        const nowIso = new Date().toISOString();
+
+        // Step 3: Update product stocks
+        for (const pr of productReads) {
+          const newStock = pr.currentStock - pr.qty;
+          transaction.update(pr.ref, {
+            stockQuantity: newStock,
+            updatedAt: nowIso,
+          });
+          updatedStocks[pr.id] = newStock;
+        }
+
+        // Step 4: Save the invoice (avec le numéro confirmé)
+        const invRef = doc(db, 'users', userId, 'invoices', invoice.id);
+        transaction.set(invRef, sanitizeForFirestore({
+          ...invoice,
+          number: confirmedInvoiceNumber,
+          updatedAt: nowIso,
+        }));
+
+        // Step 5: Save payment if provided
+        if (payment) {
+          const payRef = doc(db, 'users', userId, 'payments', payment.id);
+          transaction.set(payRef, sanitizeForFirestore({
+            ...payment,
+            invoiceNumber: confirmedInvoiceNumber,
+          }));
+        }
+
+        // Step 6: Save each stock movement
+        for (const mov of movements) {
+          const movRef = doc(db, 'users', userId, 'movements', mov.id);
+          transaction.set(movRef, sanitizeForFirestore(mov));
+        }
+
+        // Step 7: Increment nextInvoiceNumber atomically
         transaction.set(
           settingsRef,
           { nextInvoiceNumber: increment(1) },
           { merge: true }
         );
-
-        // Écrasement du numéro de facture avec celui confirmé par la transaction
-        const invRefConfirmed = doc(db, 'users', userId, 'invoices', invoice.id);
-        transaction.set(invRefConfirmed, { number: confirmedInvoiceNumber }, { merge: true });
       });
 
       this.markCollectionHealthy('products');
